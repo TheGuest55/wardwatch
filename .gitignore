@@ -6,3 +6,4 @@ data/
 __pycache__/
 mlruns/
 *.parquet
+docs/
