@@ -35,3 +35,9 @@ Section tags: [DATA] dataset & testbed · [PREP] pre-processing · [MODEL] model
 **Why:** B1 rule 6 requires Python 3.11, so Python code will run in pinned 3.11 containers instead of the VM's interpreter, and pcap counting will also run in a container.
 **Evidence:** `docker version`, `docker compose version`, `df -h`, `nproc`, `free -g`, `which python3.11 tcpdump tshark`.
 **Report impact:** Appendix / user manual only.
+
+### 2026-11-01 · [ENV] · failure
+**What:** Follow-up to the earlier network-block entry. After the human updated the host policy, the A3 hosts respond, but `docker pull hello-world:linux` still fails with 403 because image blobs redirect to `production.cloudfront.docker.com`, which is not in the A3 allowlist and is waiting on approval. `production.cloudflare.docker.com` is reachable (its 403 is "invalid URL signature" from the origin, not the firewall).
+**Why:** The A3 list names only Docker's Cloudflare blob host; Docker Hub also serves blobs from CloudFront. Domain approval is the human's decision (B2).
+**Evidence:** `docker pull hello-world:linux`; `curl -sS -m 20 https://production.cloudfront.docker.com/` returns "Approval required".
+**Report impact:** Appendix / user manual: add this domain to the setup allowlist.
