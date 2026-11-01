@@ -1,0 +1,8 @@
+data/
+.env
+*.pcap
+*.pcapng
+.venv/
+__pycache__/
+mlruns/
+*.parquet
