@@ -3,9 +3,8 @@
 Runs the scheduled attack classes against the lab and writes ground truth. Invoked inside the
 attacker container by the session runner."""
 import argparse
+import json
 import os
-
-import yaml
 
 from .context import Context
 from .runner import Runner
@@ -20,7 +19,7 @@ def main():
     args = ap.parse_args()
 
     with open(args.schedule) as f:
-        schedule = yaml.safe_load(f)
+        schedule = json.load(f)
 
     ctx = Context(args.session, args.out, args.seed)
     Runner(ctx, schedule).run_all()

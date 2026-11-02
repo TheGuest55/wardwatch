@@ -3,15 +3,17 @@ measures real start/end times, and appends one ground-truth line per run."""
 import json
 import time
 
-from . import util
+from . import timing, util
 from .attacks import REGISTRY
 
 
 class Runner:
     def __init__(self, ctx, schedule):
         self.ctx = ctx
-        self.gap = float(schedule.get("gap_seconds", 180))
-        self.runs = schedule["runs"]
+        self.runs = schedule.get("runs", [])
+        # Seeded random gaps, drawn up front (first use of ctx.rng) so the timeline preview in
+        # scripts/session_timeline.py matches exactly. Timing is non-periodic by design.
+        self.gaps = timing.draw_gaps(ctx.rng, schedule, len(self.runs) - 1)
         self.gt_path = ctx.out_dir / "ground_truth.jsonl"
 
     def _record(self, line):
@@ -28,7 +30,7 @@ class Runner:
             run_id = entry.get("run_id") or f"{self.ctx.session_id}-{cls}-{i + 1:02d}"
 
             if i > 0:
-                time.sleep(self.gap)  # quiet normal traffic between runs
+                time.sleep(self.gaps[i - 1])  # seeded quiet normal traffic between runs
 
             print(f"[{run_id}] {cls} starting", flush=True)
             start = util.utc_iso()

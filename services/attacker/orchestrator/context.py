@@ -9,8 +9,9 @@ bruteforce wordlist seeds from it and it is the fallback when live recovery fail
 creds_source=fallback in ground truth)."""
 import json
 import os
-import random
 from pathlib import Path
+
+from . import timing
 
 
 class Context:
@@ -18,7 +19,8 @@ class Context:
         self.session_id = session_id
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.rng = random.Random(seed)
+        # Per-session RNG: reproducible, but different per session so attack timing varies.
+        self.rng = timing.session_rng(seed, session_id)
         self.cfg = json.loads(Path("/config/ward.json").read_text())
 
         self.beds = self.cfg["beds"]
