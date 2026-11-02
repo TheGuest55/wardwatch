@@ -21,6 +21,11 @@ DRY=false
 case "$ID" in t*|s00) DRY=true;; esac
 if $DRY; then
   SCHED="${SCHEDULE:-schedules/smoke.yaml}"; PRE_ROLL="${PRE_ROLL:-15}"; POST_ROLL="${POST_ROLL:-10}"
+  # Dry runs only: shorten the nurse's command/reconnect cadence (from config) so a short
+  # session exercises them. Normal sessions leave these unset and use the built-in cadence.
+  export NURSE_CMD_INTERVAL="$(python3 -c "import json;print(json.load(open('config/ward.json')).get('dry_run',{}).get('nurse_cmd_interval',''))")"
+  export NURSE_RECONNECT_MIN="$(python3 -c "import json;print(json.load(open('config/ward.json')).get('dry_run',{}).get('reconnect_min',120))")"
+  export NURSE_RECONNECT_MAX="$(python3 -c "import json;print(json.load(open('config/ward.json')).get('dry_run',{}).get('reconnect_max',240))")"
 else
   SCHED="${SCHEDULE:-schedules/default.yaml}"; PRE_ROLL="${PRE_ROLL:-300}"; POST_ROLL="${POST_ROLL:-120}"
 fi

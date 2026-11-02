@@ -112,6 +112,10 @@ def device_service(h, cfg):
         vols.insert(0, "./data/raw/physionet:/data/physionet:ro")
     if h["role"] == "nurse-station":
         env["BEDS"] = str(cfg["beds"])
+        # Empty defaults => nurse.py uses its built-in cadence; dry runs export short values.
+        env["NURSE_CMD_INTERVAL"] = "${NURSE_CMD_INTERVAL:-}"
+        env["NURSE_RECONNECT_MIN"] = "${NURSE_RECONNECT_MIN:-120}"
+        env["NURSE_RECONNECT_MAX"] = "${NURSE_RECONNECT_MAX:-240}"
     return _service(h["name"], image=cfg["images"]["device"], build="./services/devices",
                     env=env, ip=h["ip"], cpus=lim["device_cpus"], mem=lim["device_mem"],
                     depends=["broker"], volumes=vols)

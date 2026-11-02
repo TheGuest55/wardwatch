@@ -47,9 +47,7 @@ class Noise:
     def offline_seconds(self):
         return self.rng.uniform(10, 60)
 
-    def log_reboot(self, start_iso, end_iso, offline_s):
-        rec = {"host": self.username, "ip": self.host_ip, "event": "reboot",
-               "start_utc": start_iso, "end_utc": end_iso, "offline_s": round(offline_s, 2)}
+    def _emit(self, rec):
         line = json.dumps(rec)
         print(f"BENIGN_EVENT {line}", flush=True)
         if not self.session_dir:
@@ -62,3 +60,12 @@ class Noise:
                 f.write(line + "\n")
         except OSError as exc:
             print(f"could not write benign event: {exc}", flush=True)
+
+    def log_event(self, kind, ts=None, **fields):
+        """Record a benign event (reboot, reconnect, nurse_command, ...) with a 'ts' field."""
+        self._emit({"host": self.username, "ip": self.host_ip, "event": kind,
+                    "ts": ts or utcnow(), **fields})
+
+    def log_reboot(self, start_iso, end_iso, offline_s):
+        self.log_event("reboot", ts=start_iso, start_utc=start_iso, end_utc=end_iso,
+                       offline_s=round(offline_s, 2))

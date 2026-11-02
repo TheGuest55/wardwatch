@@ -19,7 +19,7 @@ def merge_benign(sdir):
             line = line.strip()
             if line:
                 events.append(json.loads(line))
-    events.sort(key=lambda e: e.get("start_utc", ""))
+    events.sort(key=lambda e: e.get("ts") or e.get("start_utc", ""))
     out = sdir / "benign_events.jsonl"
     out.write_text("".join(json.dumps(e) + "\n" for e in events))
     return len(events)

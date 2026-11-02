@@ -50,7 +50,7 @@ class Runner:
                 "src_ip": self.ctx.src_ip,
                 "src_mac": self.ctx.src_mac,
                 "targets": result.get("targets", []),
-                "params": params,
+                "params": {**params, **result.get("params_out", {})},
                 "outcome": outcome,
                 "notes": result.get("notes", ""),
                 **({"creds_source": result["creds_source"]} if "creds_source" in result else {}),

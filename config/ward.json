@@ -13,6 +13,7 @@
   },
   "seed": 1337,
   "noise": { "jitter": true, "reboot": true, "sampling_drift": 0.15, "reboot_per_hour": 2 },
+  "dry_run": { "nurse_cmd_interval": 30, "reconnect_min": 45, "reconnect_max": 75 },
   "limits": {
     "device_cpus": 0.25, "device_mem": "128m",
     "broker_cpus": 0.5, "broker_mem": "256m",
