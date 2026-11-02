@@ -1,9 +1,14 @@
 import os
 import sys
 
-from . import monitor, nurse
+from . import monitor, nurse, pump, wearable
 
-ROLES = {"patient-monitor": monitor.run, "nurse-station": nurse.run}
+ROLES = {
+    "patient-monitor": monitor.run,
+    "infusion-pump": pump.run,
+    "wearable": wearable.run,
+    "nurse-station": nurse.run,
+}
 
 
 def main():

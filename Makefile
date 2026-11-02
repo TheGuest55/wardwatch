@@ -1,21 +1,40 @@
-.PHONY: up down smoke capture logs clean
+.PHONY: gen up down smoke session sessions features dataset datacheck logs clean
 
-up:
-	sh scripts/fetch_bidmc.sh
-	mkdir -p data/raw/pcap
-	docker compose up -d --build
+# Regenerate docker-compose.yml, broker ACLs/accounts and .env from config/ward.json.
+gen:
+	python3 scripts/gen_lab.py
+
+up: gen
+	python3 scripts/fetch_physionet.py
+	mkdir -p data/raw/pcap data/raw/sessions
+	docker compose up -d --build --remove-orphans
 
 down:
 	docker compose down
 
+logs:
+	docker compose logs -f --tail=50
+
 smoke:
 	bash scripts/smoke/run_all.sh
 
-capture:
-	docker compose up -d capture
+# One session end to end (Task 3): make session ID=s01
+session: gen
+	bash scripts/run_session.sh "$(ID)"
 
-logs:
-	docker compose logs -f --tail=50
+# Several sessions back to back for unattended recording (Task 3): make sessions IDS="s01 s02"
+sessions: gen
+	bash scripts/run_sessions.sh $(IDS)
+
+# Feature extraction / dataset / checks (Tasks 4-5) run in the analysis container.
+features:
+	bash scripts/analysis.sh features "$(SESSION)"
+
+dataset:
+	bash scripts/analysis.sh dataset
+
+datacheck:
+	bash scripts/analysis.sh datacheck
 
 # Removes containers and locally built images. Never deletes data/.
 clean:

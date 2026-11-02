@@ -1,0 +1,21 @@
+{
+  "network": { "subnet": "172.28.10.0/24", "bridge": "br-ward" },
+  "broker": { "ip": "172.28.10.10" },
+  "nurse": { "ip": "172.28.10.20" },
+  "attacker": { "ip": "172.28.10.66" },
+  "beds": 4,
+  "bidmc_records": { "1": "01", "2": "05", "3": "15", "4": "41" },
+  "images": {
+    "broker": "eclipse-mosquitto:2.0.22",
+    "device": "wardwatch-device:0.1.0",
+    "capture": "wardwatch-capture:0.1.0",
+    "attacker": "wardwatch-attacker:0.1.0"
+  },
+  "seed": 1337,
+  "noise": { "jitter": true, "reboot": true, "sampling_drift": 0.15, "reboot_per_hour": 2 },
+  "limits": {
+    "device_cpus": 0.25, "device_mem": "128m",
+    "broker_cpus": 0.5, "broker_mem": "256m",
+    "infra_cpus": 1.0, "infra_mem": "512m"
+  }
+}
