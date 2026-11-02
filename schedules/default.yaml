@@ -1,0 +1,19 @@
+# Full session schedule: one run of every attack class, ~3 min of normal traffic between runs.
+gap_seconds: 180
+runs:
+  - class: recon_scan
+    params: { max_rate: 500, timeout: 90 }
+  - class: syn_flood
+    params: { pps: 1000, duration: 30 }
+  - class: mqtt_flood
+    params: { conn_per_s: 50, duration: 30 }
+  - class: bruteforce
+    params: { delay: 0.3 }
+  - class: arp_mitm
+    params: { duration: 90 }
+  - class: eavesdrop
+    params: { duration: 180 }
+  - class: spoof_vitals
+    params: { duration: 60, client_id_reuse: true }
+  - class: pump_cmd
+    params: { duration: 60, cmds_per_min: 10 }

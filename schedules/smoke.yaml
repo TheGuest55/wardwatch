@@ -1,0 +1,19 @@
+# Short schedule for dry-run sessions: every class, brief, short gaps. Not for the dataset.
+gap_seconds: 5
+runs:
+  - class: recon_scan
+    params: { max_rate: 1000, timeout: 30 }
+  - class: syn_flood
+    params: { pps: 500, duration: 8 }
+  - class: mqtt_flood
+    params: { conn_per_s: 30, duration: 8 }
+  - class: bruteforce
+    params: { delay: 0.1 }
+  - class: arp_mitm
+    params: { duration: 20 }
+  - class: eavesdrop
+    params: { duration: 10 }
+  - class: spoof_vitals
+    params: { duration: 10, client_id_reuse: true }
+  - class: pump_cmd
+    params: { duration: 10, cmds_per_min: 30 }

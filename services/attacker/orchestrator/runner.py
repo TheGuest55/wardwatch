@@ -1,0 +1,58 @@
+"""Schedule runner: executes attack classes in order, enforces a quiet gap between runs,
+measures real start/end times, and appends one ground-truth line per run."""
+import json
+import time
+
+from . import util
+from .attacks import REGISTRY
+
+
+class Runner:
+    def __init__(self, ctx, schedule):
+        self.ctx = ctx
+        self.gap = float(schedule.get("gap_seconds", 180))
+        self.runs = schedule["runs"]
+        self.gt_path = ctx.out_dir / "ground_truth.jsonl"
+
+    def _record(self, line):
+        with open(self.gt_path, "a") as f:
+            f.write(json.dumps(line) + "\n")
+
+    def run_all(self):
+        for i, entry in enumerate(self.runs):
+            cls = entry["class"]
+            if cls not in REGISTRY:
+                raise SystemExit(f"unknown attack class: {cls}")
+            handler = REGISTRY[cls]
+            params = entry.get("params", {})
+            run_id = entry.get("run_id") or f"{self.ctx.session_id}-{cls}-{i + 1:02d}"
+
+            if i > 0:
+                time.sleep(self.gap)  # quiet normal traffic between runs
+
+            print(f"[{run_id}] {cls} starting", flush=True)
+            start = util.utc_iso()
+            t0 = util.monotonic()
+            try:
+                result = handler(self.ctx, params) or {}
+                outcome = result.get("outcome", "success")
+            except Exception as exc:  # a failed attack is data, not a crash
+                result, outcome = {"notes": f"exception: {exc}"}, "fail"
+            end = util.utc_iso()
+
+            self._record({
+                "run_id": run_id,
+                "session": self.ctx.session_id,
+                "class": cls,
+                "stage": handler.STAGE,
+                "start_utc": start,
+                "end_utc": end,
+                "src_ip": self.ctx.src_ip,
+                "src_mac": self.ctx.src_mac,
+                "targets": result.get("targets", []),
+                "params": params,
+                "outcome": outcome,
+                "notes": result.get("notes", ""),
+                **({"creds_source": result["creds_source"]} if "creds_source" in result else {}),
+            })
+            print(f"[{run_id}] {cls} {outcome} in {util.monotonic() - t0:.1f}s", flush=True)
