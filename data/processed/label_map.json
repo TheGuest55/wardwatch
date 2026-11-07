@@ -1,0 +1,52 @@
+{
+  "_description": "Draft label map between the WardWatch testbed classes and CICIoMT2024 (WiFi_and_MQTT) labels, shared classes only. Used to align labels for the cross-dataset work (Experiment C: our shared extractor on CIC pcaps; Experiment D: CIC's own feature CSVs + official split). Drafted 2026-11-04 from the CIC labels present on disk; NOT an Experiment-C design.",
+  "cic_source": {
+    "root": "data/raw/ciciomt2024/WiFi_and_MQTT/attacks/csv",
+    "label_encoding": "per-file (attack name is the filename stem, e.g. ARP_Spoofing_train.pcap.csv)",
+    "split_encoding": "per-folder (csv/train vs csv/test)",
+    "internal_label_column": false,
+    "row_semantics": "one row = aggregate statistics over a packet group/flow (columns Number/AVG/Std/IAT/Covariance/Weight confirm per-group aggregation, not per-packet)",
+    "n_feature_columns": 45,
+    "identifier_or_time_columns": "none (no timestamp, IP, MAC, host or flow-key column; 'IPv' is an IP-version protocol indicator, not an address)",
+    "raw_pcaps_present": false,
+    "pcap_blocker": "registration wall (train_listing.html = 'Registration required'); only CIC's extracted-feature CSVs were downloaded"
+  },
+  "shared_classes": {
+    "recon_scan": {
+      "cic_labels": ["Recon-OS_Scan", "Recon-Ping_Sweep", "Recon-Port_Scan", "Recon-VulScan"],
+      "note": "Generic reconnaissance; our recon_scan is an nmap-style scan."
+    },
+    "syn_flood": {
+      "cic_labels": ["TCP_IP-DoS-SYN1", "TCP_IP-DoS-SYN2", "TCP_IP-DoS-SYN3", "TCP_IP-DoS-SYN4",
+                     "TCP_IP-DDoS-SYN1", "TCP_IP-DDoS-SYN2", "TCP_IP-DDoS-SYN3", "TCP_IP-DDoS-SYN4"],
+      "note": "CIC separates DoS vs DDoS (single vs many sources); our testbed uses a single fixed source, so it is closest to the DoS-SYN variants but we include DDoS-SYN for completeness."
+    },
+    "mqtt_flood": {
+      "cic_labels": ["MQTT-DoS-Connect_Flood", "MQTT-DoS-Publish_Flood",
+                     "MQTT-DDoS-Connect_Flood", "MQTT-DDoS-Publish_Flood"],
+      "note": "Our mqtt_flood is connect/publish flooding; CIC splits connect vs publish and DoS vs DDoS."
+    },
+    "arp_mitm": {
+      "cic_labels": ["ARP_Spoofing"],
+      "note": "SEMANTIC GAP: CIC's ARP_Spoofing is spoofing only; our arp_mitm additionally forwards/relays traffic (full MITM). Shared at the ARP-anomaly level, not identical."
+    }
+  },
+  "benign": { "cic_labels": ["Benign"] },
+  "testbed_only_no_cic_equivalent": ["bruteforce", "eavesdrop", "spoof_vitals", "pump_cmd"],
+  "_testbed_only_note": "No CIC equivalent: CIC has no MQTT credential brute-force and no stolen-credential abuse (wildcard eavesdropping, spoofed vitals, unauthorised pump commands). These are testbed-specific and cannot appear in a shared-class cross-dataset experiment.",
+  "cic_only_not_in_testbed": [
+    "MQTT-Malformed_Data",
+    "TCP_IP-DoS-ICMP1..4", "TCP_IP-DDoS-ICMP1..8",
+    "TCP_IP-DoS-TCP1..4", "TCP_IP-DDoS-TCP1..4",
+    "TCP_IP-DoS-UDP1..4", "TCP_IP-DDoS-UDP1..8"
+  ],
+  "_cic_only_note": "Present in CIC, absent from our testbed. For a binary attack-vs-normal cross-dataset test these all map to 'attack'; they have no shared multiclass label with the testbed.",
+  "binary_map": {
+    "attack": "every CIC label except 'Benign'",
+    "normal": ["Benign"]
+  },
+  "caveats": [
+    "Feature spaces differ: CIC = 45 aggregate per-packet-group stats with no identifiers/time; testbed = one row per host-MAC per 5 s window with MQTT-semantic (topic-derived, client-id reuse) and L2/ARP features. Experiment C requires running our shared extractor on CIC PCAPs (absent). Experiment D uses CIC's own 45-col CSVs.",
+    "This file maps labels only; it does not define the shared feature subset or any Experiment-C design (parked until the CIC pcaps are available)."
+  ]
+}

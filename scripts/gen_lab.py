@@ -99,7 +99,9 @@ def device_service(h, cfg):
         "MQTT_PASSWORD": "${%s:?set in .env}" % env_var(h["name"]),
         "BED": str(h["bed"]),
         "HOST_IP": h["ip"],
-        "SEED": str(cfg["seed"]),
+        # Env SEED overrides the config default so a session can use a distinct seed (e.g. s06);
+        # unset -> the config seed, so earlier sessions' semantics are unchanged.
+        "SEED": "${SEED:-%s}" % cfg["seed"],
         "SESSION_ID": "${SESSION_ID:-}",
         "REALISM_JITTER": "1" if noise["jitter"] else "0",
         "REALISM_REBOOT": "1" if noise["reboot"] else "0",
@@ -188,7 +190,7 @@ def generate(cfg):
                                     "./data/raw/sessions:/data/sessions"]))
 
     blocks.append(_service("attacker", image=img["attacker"], build="./services/attacker",
-                           env={"SEED": str(cfg["seed"]), "SESSION_ID": "${SESSION_ID:-}"},
+                           env={"SEED": "${SEED:-%s}" % cfg["seed"], "SESSION_ID": "${SESSION_ID:-}"},
                            ip=cfg["attacker"]["ip"], cap_add=["NET_RAW", "NET_ADMIN"],
                            sysctls={"net.ipv4.ip_forward": "1"},
                            cpus=lim["infra_cpus"], mem=lim["infra_mem"],

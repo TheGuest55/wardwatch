@@ -38,7 +38,9 @@ else
   # ~90 min attack session: 10 min pre-roll, 8 runs with seeded 6-10 min gaps, 5 min post-roll.
   SCHED="${SCHEDULE:-schedules/default.json}"; PRE_ROLL="${PRE_ROLL:-600}"; POST_ROLL="${POST_ROLL:-300}"
 fi
-SEED="$(python3 -c "import json;print(json.load(open('config/ward.json'))['seed'])")"
+# Env SEED overrides the config default for this one session (e.g. a distinct seed for s06);
+# recorded in config.json below and passed to both devices (via compose) and the attacker.
+SEED="${SEED:-$(python3 -c "import json;print(json.load(open('config/ward.json'))['seed'])")}"
 
 mkdir -p "$SDIR"
 python3 - "$ID" "$DRY" "$SCHED" "$SEED" > "$SDIR/config.json" <<'PY'
@@ -52,7 +54,7 @@ PY
 cp "$SCHED" "$SDIR/schedule.json"
 
 echo "[$ID] bringing ward up (dry_run=$DRY, schedule=$SCHED)"
-SESSION_ID="$ID" docker compose up -d --build --remove-orphans >/dev/null
+SESSION_ID="$ID" SEED="$SEED" docker compose up -d --build --remove-orphans >/dev/null
 echo "[$ID] pre-roll normal traffic: ${PRE_ROLL}s"
 sleep "$PRE_ROLL"
 
