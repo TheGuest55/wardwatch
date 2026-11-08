@@ -87,7 +87,8 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
     acc = {}                      # (mac, win) -> _Acc
     clientid_owner = {}           # client_id -> first MAC that used it
     ip_to_mac = {}               # running IP->MAC map (latest), for conflict detection
-    conflict_windows = set()
+    conflict_windows = set()      # windows with ANY conflict (for the extract-level count)
+    conflict_macs = {}            # win -> set of MACs involved in a conflicting IP claim (review M2)
     flow_first_seen = {}          # flow_key -> epoch of its first packet (causal; never the future)
     plaus = PlausibilityTracker()
 
@@ -192,9 +193,13 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
             prev = ip_to_mac.get(claim_ip)
             if prev is not None and prev != claim_mac:
                 conflict_windows.add(win)
+                # Only the old and new owners of the disputed IP are "involved" (review M2); the
+                # flag is a host property, not a window-wide one, so bystanders stay unflagged.
+                conflict_macs.setdefault(win, set()).update({prev, claim_mac})
             ip_to_mac[claim_ip] = claim_mac
 
-    rows = [_finalize(mac, win, a, session, ip_roles, win in conflict_windows, flow_first_seen)
+    rows = [_finalize(mac, win, a, session, ip_roles,
+                      mac in conflict_macs.get(win, ()), flow_first_seen, attacker_mac)
             for (mac, win), a in acc.items()]
     return rows, conflict_windows
 
@@ -235,12 +240,16 @@ def _accumulate_mqtt(a, rec, src_mac, clientid_owner, plaus):
                     a.wildcard_subs += 1
 
 
-def _finalize(mac, win, a, session, ip_roles, conflict, flow_first_seen):
+def _finalize(mac, win, a, session, ip_roles, conflict, flow_first_seen, attacker_mac):
     sizes = np.array(a.sizes, dtype=float) if a.sizes else np.array([0.0])
     tss = sorted(a.ts)
     iats = np.diff(tss) if len(tss) > 1 else np.array([0.0])
     pkts_total = a.pkts_sent + a.pkts_recv
     host_ip = max(a.ip_counts, key=a.ip_counts.get) if a.ip_counts else None
+    # Role from the MAC, not from traffic (review M3): the attacker forwards packets carrying the
+    # victims' IPs during ARP-MITM, so an IP-derived role would mislabel the attacker as a monitor/
+    # broker. The MAC is the stable host identity; everything else keys off ip_roles by host_ip.
+    host_role = "attacker" if mac == attacker_mac else ip_roles.get(host_ip, "unknown")
     mqtt_total = sum(a.mqtt_counts.values())
     payloads = np.array(a.mqtt_payloads, dtype=float) if a.mqtt_payloads else np.array([0.0])
 
@@ -259,7 +268,7 @@ def _finalize(mac, win, a, session, ip_roles, conflict, flow_first_seen):
         "window_start_iso": common.epoch_to_iso(win),
         "host_mac": mac,
         "host_ip": host_ip,
-        "host_role": ip_roles.get(host_ip, "unknown"),
+        "host_role": host_role,
         "touches_attacker": bool(a.touches_attacker),  # used by labeller, dropped before modelling
         # --- features: volume / size / timing ---
         "pkts_total": pkts_total,
