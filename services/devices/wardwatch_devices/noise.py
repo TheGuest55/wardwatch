@@ -12,10 +12,19 @@ def utcnow():
     return datetime.now(timezone.utc).isoformat()
 
 
+def device_seed_rng(seed, session_id, username):
+    """Per-(session, device) RNG. Review B3: the old seed was `SEED ^ hash(username)` with no
+    session id, so every session recorded at the same base seed replayed identical reboots, nurse
+    commands and BIDMC offsets — train/val/test benign traffic were not independent. Folding the
+    session id in (mirrors the attacker's timing.session_rng) makes benign behaviour differ per
+    session while staying reproducible for a given (seed, session, device)."""
+    h = hashlib.sha256(f"{seed}:{session_id}:{username}".encode()).hexdigest()[:16]
+    return random.Random(int(h, 16))
+
+
 def _seeded_rng(username):
-    seed = int(os.environ.get("SEED", "0"))
-    tag = int(hashlib.sha256(username.encode()).hexdigest()[:8], 16)
-    return random.Random(seed ^ tag)
+    return device_seed_rng(os.environ.get("SEED", "0"),
+                           os.environ.get("SESSION_ID", "").strip(), username)
 
 
 class Noise:
