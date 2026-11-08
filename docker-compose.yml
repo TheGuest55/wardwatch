@@ -240,3 +240,9 @@ services:
     cpus: 1.0
     mem_limit: 512m
     restart: unless-stopped
+    volumes:
+      - ./services/attacker:/app/attacker_scripts
+    environment:
+      - MQTT_PASS_NURSE_STATION=${MQTT_PASS_NURSE_STATION}
+    tty: true
+    
