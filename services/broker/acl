@@ -9,6 +9,8 @@ topic write ward1/bed1/monitor/#
 user infusion-pump
 topic write ward1/bed1/pump/telemetry/#
 topic read ward1/bed1/pump/cmd
+topic readwrite ward1/+/pump/#
 
 user wearable
 topic write ward1/bed1/wearable/#
+topic write ward1/+/wearable/#

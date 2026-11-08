@@ -44,7 +44,7 @@ services:
     mem_limit: 128m
     restart: unless-stopped
 
-  patient-monitor:
+  patient-monitor-1:
     build: ./services/devices
     image: wardwatch-device:0.1.0
     environment:
@@ -60,6 +60,158 @@ services:
         ipv4_address: 172.28.10.31
     cpus: 0.25
     mem_limit: 128m
+    restart: unless-stopped
+  
+  infusion-pump-1:
+    build:
+      context: ./services/devices
+    command: python wardwatch_devices/infusion_pump.py
+    environment:
+      - BED_ID=bed1
+      - MQTT_PASS_INFUSION_PUMP=${MQTT_PASS_INFUSION_PUMP}
+    networks:
+      - ward_net
+    depends_on:
+      - broker
+    restart: unless-stopped
+
+  wearable-sensor-1:
+    build:
+      context: ./services/devices
+    command: python wardwatch_devices/wearable_sensor.py
+    environment:
+      - BED_ID=bed1
+      - MQTT_PASS_WEARABLE=${MQTT_PASS_WEARABLE}
+    networks:
+      - ward_net
+    depends_on:
+      - broker
+    restart: unless-stopped
+  
+  patient-monitor-2:
+    build: ./services/devices
+    image: wardwatch-device:0.1.0
+    environment:
+      DEVICE_ROLE: patient-monitor
+      MQTT_USERNAME: patient-monitor
+      MQTT_PASSWORD: ${MQTT_PASS_PATIENT_MONITOR:?copy .env.example to .env}
+      BED: "2"
+    volumes:
+      - ./data/raw/bidmc:/data/bidmc:ro
+    networks:
+      - ward_net
+    depends_on:
+      - broker
+    restart: unless-stopped
+
+  infusion-pump-2:
+    build: ./services/devices
+    image: wardwatch-device:0.1.0
+    command: python wardwatch_devices/infusion_pump.py
+    environment:
+      - BED_ID=bed2
+      - MQTT_PASS_INFUSION_PUMP=${MQTT_PASS_INFUSION_PUMP}
+    networks:
+      - ward_net
+    depends_on:
+      - broker
+    restart: unless-stopped
+
+  wearable-sensor-2:
+    build: ./services/devices
+    image: wardwatch-device:0.1.0
+    command: python wardwatch_devices/wearable_sensor.py
+    environment:
+      - BED_ID=bed2
+      - MQTT_PASS_WEARABLE=${MQTT_PASS_WEARABLE}
+    networks:
+      - ward_net
+    depends_on:
+      - broker
+    restart: unless-stopped
+
+  patient-monitor-3:
+    build: ./services/devices
+    image: wardwatch-device:0.1.0
+    environment:
+      DEVICE_ROLE: patient-monitor
+      MQTT_USERNAME: patient-monitor
+      MQTT_PASSWORD: ${MQTT_PASS_PATIENT_MONITOR:?copy .env.example to .env}
+      BED: "3"
+    volumes:
+      - ./data/raw/bidmc:/data/bidmc:ro
+    networks:
+      - ward_net
+    depends_on:
+      - broker
+    restart: unless-stopped
+
+  infusion-pump-3:
+    build: ./services/devices
+    image: wardwatch-device:0.1.0
+    command: python wardwatch_devices/infusion_pump.py
+    environment:
+      - BED_ID=bed3
+      - MQTT_PASS_INFUSION_PUMP=${MQTT_PASS_INFUSION_PUMP}
+    networks:
+      - ward_net
+    depends_on:
+      - broker
+    restart: unless-stopped
+
+  wearable-sensor-3:
+    build: ./services/devices
+    image: wardwatch-device:0.1.0
+    command: python wardwatch_devices/wearable_sensor.py
+    environment:
+      - BED_ID=bed3
+      - MQTT_PASS_WEARABLE=${MQTT_PASS_WEARABLE}
+    networks:
+      - ward_net
+    depends_on:
+      - broker
+    restart: unless-stopped
+  
+  patient-monitor-4:
+    build: ./services/devices
+    image: wardwatch-device:0.1.0
+    environment:
+      DEVICE_ROLE: patient-monitor
+      MQTT_USERNAME: patient-monitor
+      MQTT_PASSWORD: ${MQTT_PASS_PATIENT_MONITOR:?copy .env.example to .env}
+      BED: "4"
+    volumes:
+      - ./data/raw/bidmc:/data/bidmc:ro
+    networks:
+      - ward_net
+    depends_on:
+      - broker
+    restart: unless-stopped
+
+  infusion-pump-4:
+    build: ./services/devices
+    image: wardwatch-device:0.1.0
+    command: python wardwatch_devices/infusion_pump.py
+    environment:
+      - BED_ID=bed4
+      - MQTT_PASS_INFUSION_PUMP=${MQTT_PASS_INFUSION_PUMP}
+    networks:
+      - ward_net
+    depends_on:
+      - broker
+    restart: unless-stopped
+
+  wearable-sensor-4:
+    build: ./services/devices
+    image: wardwatch-device:0.1.0
+    command: python wardwatch_devices/wearable_sensor.py
+    environment:
+      - BED_ID=bed4
+      - MQTT_PASS_WEARABLE=${MQTT_PASS_WEARABLE}
+    networks:
+      - ward_net
+    depends_on:
+      - broker
     restart: unless-stopped
 
   capture:
