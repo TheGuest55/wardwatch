@@ -29,6 +29,13 @@ def draw_gaps(rng, schedule, n):
     return [round(rng.uniform(lo, hi), 1) for _ in range(max(0, n))]
 
 
+def choose_spoof_mode(rng):
+    """Seeded choice of the spoof_vitals sub-mode (review M6: don't always run reuse). True = reuse
+    the victim's client id (evicts the real device); False = connect with a second client id (the
+    harder-to-detect variant). Per-session rng, so the mode varies across sessions and is logged."""
+    return rng.random() < 0.5
+
+
 def run_duration(cls, params):
     return params.get("duration") or params.get("timeout") or NOMINAL.get(cls, 30)
 

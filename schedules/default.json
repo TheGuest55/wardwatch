@@ -8,7 +8,7 @@
     { "class": "bruteforce",   "params": { "delay": 0.3, "wordlist_len": 150 } },
     { "class": "arp_mitm",     "params": { "duration": 90 } },
     { "class": "eavesdrop",    "params": { "duration": 180 } },
-    { "class": "spoof_vitals", "params": { "duration": 60, "client_id_reuse": true } },
+    { "class": "spoof_vitals", "params": { "duration": 60 } },
     { "class": "pump_cmd",     "params": { "duration": 60, "cmds_per_min": 10, "dangerous_frac": 0.25 } }
   ]
 }

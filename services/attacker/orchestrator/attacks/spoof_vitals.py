@@ -9,7 +9,7 @@ import paho.mqtt.client as mqtt
 from payloads import monitor_vitals
 
 from .creds import pick_creds
-from .. import util
+from .. import timing, util
 
 
 def _payload(ctx, bed, implausible):
@@ -25,7 +25,9 @@ def _payload(ctx, bed, implausible):
 
 def spoof_vitals(ctx, params):
     duration = int(params.get("duration", 60))
-    reuse = bool(params.get("client_id_reuse", True))
+    # Seeded per-session mode (M6) unless the schedule pins it (used by smoke/tests for determinism).
+    reuse = bool(params["client_id_reuse"]) if "client_id_reuse" in params \
+        else timing.choose_spoof_mode(ctx.rng)
     user, pw, src = pick_creds(ctx, "device")
     if not user:
         return {"outcome": "fail", "notes": "no device credentials available"}
@@ -48,6 +50,8 @@ def spoof_vitals(ctx, params):
     except Exception as exc:
         return {"outcome": "fail", "notes": str(exc), "creds_source": src}
     return {"targets": [ctx.broker_ip], "creds_source": src,
+            "params_out": {"client_id_reuse": reuse,
+                           "spoof_mode": "reuse" if reuse else "second_client_id"},
             "notes": f"published {sent} spoofed vitals to bed{bed} as {user} ({src}), "
                      f"client_id_reuse={reuse}"}
 
