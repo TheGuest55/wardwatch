@@ -21,7 +21,7 @@ services:
       MQTT_PASS_INFUSION_PUMP: ${MQTT_PASS_INFUSION_PUMP:?copy .env.example to .env}
       MQTT_PASS_WEARABLE: ${MQTT_PASS_WEARABLE:?copy .env.example to .env}
     volumes:
-      - ./services/broker:/mosquitto/config:ro
+      - ./services/broker:/mosquitto/config
     networks:
       ward_net:
         ipv4_address: 172.28.10.10
