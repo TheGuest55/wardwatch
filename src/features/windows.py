@@ -13,6 +13,7 @@ from .plausibility import PlausibilityTracker
 from . import mqtt
 
 BROADCAST = "ff:ff:ff:ff:ff:ff"
+MQTT_PORT = 1883
 
 
 def _is_groupcast(mac):
@@ -66,6 +67,18 @@ def _topic_depth(topic):
     return topic.count("/") + 1 if topic else 0
 
 
+def _mqtt_conn_key(rec):
+    """Canonical (client_endpoint, broker_endpoint) key for a TCP/1883 packet, direction-agnostic,
+    so both halves of a connection map to one key. None if the packet is not MQTT-port TCP."""
+    sp, dp = rec.get("sport"), rec.get("dport")
+    si, di = rec.get("ip_src"), rec.get("ip_dst")
+    if dp == MQTT_PORT:
+        return ((si, sp), (di, dp))
+    if sp == MQTT_PORT:
+        return ((di, dp), (si, sp))
+    return None
+
+
 def _flow_key(rec):
     """Direction-agnostic transport-flow key for an IPv4 TCP/UDP packet, or None. Endpoints are
     sorted so both directions map to one flow (like NFStream's bidirectional flows). ARP/ICMP and
@@ -85,7 +98,11 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
     epochs in which an IP was seen mapped to more than one MAC (joined onto rows as ip_mac_conflict).
     """
     acc = {}                      # (mac, win) -> _Acc
-    clientid_owner = {}           # client_id -> first MAC that used it
+    # Live client-id ownership by TCP connection (review M5): a CONNECT whose client id is currently
+    # held by a *different* live connection is reuse. Ownership is released on DISCONNECT/FIN/RST, so
+    # a benign device reconnecting after its previous session closed is not counted.
+    active_cid = {}               # client_id -> owning connection key
+    conn_cid = {}                 # connection key -> client_id it currently holds
     ip_to_mac = {}               # running IP->MAC map (latest), for conflict detection
     conflict_windows = set()      # windows with ANY conflict (for the extract-level count)
     conflict_macs = {}            # win -> set of MACs involved in a conflicting IP claim (review M2)
@@ -158,7 +175,13 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
                 a.tcp_rst += 1
             if rec.get("fin"):
                 a.tcp_fin += 1
-            _accumulate_mqtt(a, rec, src, clientid_owner, plaus)
+            # Release client-id ownership when its connection closes (FIN/RST), either direction.
+            if rec.get("rst") or rec.get("fin"):
+                conn = _mqtt_conn_key(rec)
+                held_cid = conn_cid.pop(conn, None) if conn else None
+                if held_cid is not None and active_cid.get(held_cid) == conn:
+                    del active_cid[held_cid]
+            _accumulate_mqtt(a, rec, src, active_cid, conn_cid, plaus)
         elif l4 == "udp":
             a.n_udp += 1
             if rec.get("dport"):
@@ -204,19 +227,25 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
     return rows, conflict_windows
 
 
-def _accumulate_mqtt(a, rec, src_mac, clientid_owner, plaus):
+def _accumulate_mqtt(a, rec, src_mac, active_cid, conn_cid, plaus):
+    conn = _mqtt_conn_key(rec)
     for m in rec.get("mqtt", []):
         name = m["type_name"]
         a.mqtt_counts[name] = a.mqtt_counts.get(name, 0) + 1
         if m["type"] == mqtt.CONNECT:
             a.mqtt_connect += 1
             cid = m.get("client_id")
-            if cid:
-                owner = clientid_owner.get(cid)
-                if owner is None:
-                    clientid_owner[cid] = src_mac
-                elif owner != src_mac:
-                    a.clientid_reuse += 1
+            if cid and conn:
+                held = active_cid.get(cid)
+                if held is not None and held != conn:
+                    a.clientid_reuse += 1   # a different live connection currently holds this id
+                active_cid[cid] = conn
+                conn_cid[conn] = cid
+        elif m["type"] == mqtt.DISCONNECT:
+            if conn is not None:
+                cid0 = conn_cid.pop(conn, None)
+                if cid0 is not None and active_cid.get(cid0) == conn:
+                    del active_cid[cid0]
         elif m["type"] == mqtt.CONNACK:
             if m.get("return_code"):  # non-zero = connection refused
                 a.connack_fail += 1
