@@ -3,12 +3,12 @@
   "gap_max": 600,
   "runs": [
     { "class": "recon_scan",   "params": { "max_rate": 500, "timeout": 90 } },
-    { "class": "syn_flood",    "params": { "pps": 1000, "duration": 30 } },
-    { "class": "mqtt_flood",   "params": { "conn_per_s": 50, "duration": 30 } },
+    { "class": "syn_flood",    "params": { "pps": 1000, "duration_range": [20, 45] } },
+    { "class": "mqtt_flood",   "params": { "conn_per_s": 50, "duration_range": [20, 45] } },
     { "class": "bruteforce",   "params": { "delay": 0.3, "wordlist_len": 150 } },
-    { "class": "arp_mitm",     "params": { "duration": 90 } },
-    { "class": "eavesdrop",    "params": { "duration": 180 } },
-    { "class": "spoof_vitals", "params": { "duration": 60 } },
-    { "class": "pump_cmd",     "params": { "duration": 60, "cmds_per_min": 10, "dangerous_frac": 0.25 } }
+    { "class": "arp_mitm",     "params": { "duration_range": [60, 120] } },
+    { "class": "eavesdrop",    "params": { "duration_range": [120, 480] } },
+    { "class": "spoof_vitals", "params": { "duration_range": [45, 120] } },
+    { "class": "pump_cmd",     "params": { "duration_range": [45, 90], "cmds_per_min": 10, "dangerous_frac": 0.25 } }
   ]
 }

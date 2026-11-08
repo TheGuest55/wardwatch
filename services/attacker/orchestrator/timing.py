@@ -53,7 +53,22 @@ def align_to_grid(window=5.0, lead=0.05, clock=time.time, sleep=time.sleep):
     return boundary
 
 
+def resolve_duration(rng, params):
+    """If params carry a `duration_range` [lo, hi], draw a concrete seeded integer `duration` from it
+    and drop the range; otherwise return params unchanged. Randomised durations within the spec
+    ranges keep runs non-periodic while staying >= one clean 5 s window (review: randomise durations)."""
+    p = dict(params)
+    rng_bounds = p.pop("duration_range", None)
+    if rng_bounds:
+        lo, hi = int(rng_bounds[0]), int(rng_bounds[1])
+        p["duration"] = rng.randint(lo, hi)
+    return p
+
+
 def run_duration(cls, params):
+    if "duration_range" in params:          # timeline preview: use the midpoint estimate
+        lo, hi = params["duration_range"]
+        return (lo + hi) / 2
     return params.get("duration") or params.get("timeout") or NOMINAL.get(cls, 30)
 
 

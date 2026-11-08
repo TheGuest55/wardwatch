@@ -26,7 +26,7 @@ class Runner:
             if cls not in REGISTRY:
                 raise SystemExit(f"unknown attack class: {cls}")
             handler = REGISTRY[cls]
-            params = entry.get("params", {})
+            params = timing.resolve_duration(self.ctx.rng, entry.get("params", {}))
             run_id = entry.get("run_id") or f"{self.ctx.session_id}-{cls}-{i + 1:02d}"
 
             if i > 0:
