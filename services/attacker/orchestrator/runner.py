@@ -32,8 +32,11 @@ class Runner:
             if i > 0:
                 time.sleep(self.gaps[i - 1])  # seeded quiet normal traffic between runs
 
+            # Align the onset to a 5 s window boundary so the first packets land in a clean (fully-
+            # inside) window and survive labelling (review M7). start_utc is the boundary itself.
+            grid = timing.align_to_grid()
             print(f"[{run_id}] {cls} starting", flush=True)
-            start = util.utc_iso()
+            start = util.utc_iso_at(grid)
             t0 = util.monotonic()
             try:
                 result = handler(self.ctx, params) or {}

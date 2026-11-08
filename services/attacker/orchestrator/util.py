@@ -13,6 +13,13 @@ def utc_iso():
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
 
+def utc_iso_at(epoch):
+    """Format a given epoch (seconds) in the same `...mmmZ` form as utc_iso(). Used to record a
+    run's start_utc at the aligned 5 s grid boundary (review M7)."""
+    dt = datetime.fromtimestamp(epoch, timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
+
 def monotonic():
     return time.monotonic()
 

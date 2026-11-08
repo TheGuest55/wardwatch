@@ -2,7 +2,9 @@
 (which executes it) and scripts/session_timeline.py (which previews it on the host). Standard
 library only so the host can import it without the attacker image's dependencies."""
 import hashlib
+import math
 import random
+import time
 
 # Nominal durations (seconds) for classes whose runtime isn't a fixed param, used only for the
 # timeline estimate. Actual runtime varies (e.g. bruteforce depends on guesses).
@@ -34,6 +36,21 @@ def choose_spoof_mode(rng):
     the victim's client id (evicts the real device); False = connect with a second client id (the
     harder-to-detect variant). Per-session rng, so the mode varies across sessions and is logged."""
     return rng.random() < 0.5
+
+
+def align_to_grid(window=5.0, lead=0.05, clock=time.time, sleep=time.sleep):
+    """Block until just past the next window boundary, and return that boundary (epoch seconds) for
+    the caller to record as the run's start_utc.
+
+    Review M7: a run whose start_utc falls *inside* a window makes that window straddle the interval
+    boundary, so the labeller drops it (is_boundary) — losing the eavesdrop wildcard SUBSCRIBE and
+    every short-abuse onset. Recording start_utc AT the boundary (and letting the first packets land
+    a few ms into the new window) makes the onset window fully-inside instead. Does not change the
+    labelling rule."""
+    now = clock()
+    boundary = (math.floor(now / window) + 1) * window
+    sleep(max(0.0, boundary + lead - now))
+    return boundary
 
 
 def run_duration(cls, params):
