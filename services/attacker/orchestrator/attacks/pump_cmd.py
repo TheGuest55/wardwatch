@@ -7,6 +7,7 @@ import json
 import time
 
 import paho.mqtt.client as mqtt
+from payloads import pump_command
 
 from .creds import pick_creds
 from .. import util
@@ -35,8 +36,7 @@ def pump_cmd(ctx, params):
             dangerous = ctx.rng.random() < dangerous_frac
             rate = ctx.rng.choice(DANGEROUS if dangerous else PLAUSIBLE)
             c.publish(f"ward1/bed{bed}/pump/cmd",
-                      json.dumps({"action": "set_rate", "rate": rate, "ts": util.utc_iso()}),
-                      qos=0)
+                      json.dumps(pump_command("set_rate", rate=rate)), qos=0)
             commands.append({"bed": bed, "rate": rate, "plausible": not dangerous})
             time.sleep(60.0 / per_min)
         c.loop_stop()

@@ -118,7 +118,8 @@ def device_service(h, cfg):
         env["NURSE_CMD_INTERVAL"] = "${NURSE_CMD_INTERVAL:-}"
         env["NURSE_RECONNECT_MIN"] = "${NURSE_RECONNECT_MIN:-120}"
         env["NURSE_RECONNECT_MAX"] = "${NURSE_RECONNECT_MAX:-240}"
-    return _service(h["name"], image=cfg["images"]["device"], build="./services/devices",
+    return _service(h["name"], image=cfg["images"]["device"],
+                    build={"context": "./services", "dockerfile": "devices/Dockerfile"},
                     env=env, ip=h["ip"], cpus=lim["device_cpus"], mem=lim["device_mem"],
                     depends=["broker"], volumes=vols)
 
@@ -127,7 +128,12 @@ def _service(name, image, env, ip=None, build=None, cpus=None, mem=None, depends
              volumes=None, network_mode=None, cap_add=None, sysctls=None, command=None):
     out = [f"  {name}:"]
     if build:
-        out.append(f"    build: {build}")
+        if isinstance(build, dict):  # context+dockerfile form (devices/attacker share ./services)
+            out.append("    build:")
+            out.append(f"      context: {build['context']}")
+            out.append(f"      dockerfile: {build['dockerfile']}")
+        else:
+            out.append(f"    build: {build}")
     out.append(f"    image: {image}")
     if command:
         out.append(f"    command: {command}")
@@ -189,7 +195,8 @@ def generate(cfg):
                            volumes=["./data/raw/pcap:/data/pcap",
                                     "./data/raw/sessions:/data/sessions"]))
 
-    blocks.append(_service("attacker", image=img["attacker"], build="./services/attacker",
+    blocks.append(_service("attacker", image=img["attacker"],
+                           build={"context": "./services", "dockerfile": "attacker/Dockerfile"},
                            env={"SEED": "${SEED:-%s}" % cfg["seed"], "SESSION_ID": "${SESSION_ID:-}"},
                            ip=cfg["attacker"]["ip"], cap_add=["NET_RAW", "NET_ADMIN"],
                            sysctls={"net.ipv4.ip_forward": "1"},

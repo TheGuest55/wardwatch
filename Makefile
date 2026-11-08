@@ -1,4 +1,4 @@
-.PHONY: gen up down smoke session sessions features dataset datacheck logs clean
+.PHONY: gen up down smoke session sessions features dataset datacheck test logs clean
 
 # Regenerate docker-compose.yml, broker ACLs/accounts and .env from config/ward.json.
 gen:
@@ -35,6 +35,10 @@ dataset:
 
 datacheck:
 	bash scripts/analysis.sh datacheck
+
+# Regression tests: generation (host, stdlib) + pipeline (analysis image). make test [TIER=generation]
+test:
+	bash scripts/run_tests.sh "$(or $(TIER),all)"
 
 # Removes containers and locally built images. Never deletes data/.
 clean:

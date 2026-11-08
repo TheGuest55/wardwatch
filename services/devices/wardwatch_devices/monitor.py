@@ -4,8 +4,9 @@ import math
 import os
 import random
 
+from payloads import monitor_vitals
+
 from .base import Device
-from .noise import utcnow
 
 DEFAULT_CSV = "/data/physionet/bidmc_01_Numerics.csv"
 
@@ -57,13 +58,11 @@ class Monitor(Device):
 
     def payload(self):
         hr, spo2 = next(self.source_iter)
-        return {
-            "device": "patient-monitor", "bed": self.bed, "ts": utcnow(),
-            "hr": hr, "spo2": spo2,
-            "bp_sys": round(self.bp_rng.gauss(120, 4)),
-            "bp_dia": round(self.bp_rng.gauss(78, 3)),
-            "vitals_source": self.source, "bp_source": "synthetic",
-        }
+        # Shared builder (services/shared/payloads.py) fixes field order + representation so the
+        # spoof_vitals attack, which uses the same builder, is not separable by a payload artefact.
+        return monitor_vitals(self.bed, hr, spo2,
+                              self.bp_rng.gauss(120, 4), self.bp_rng.gauss(78, 3),
+                              vitals_source=self.source)
 
 
 def run():

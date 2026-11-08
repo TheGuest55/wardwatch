@@ -1,0 +1,5 @@
+# Build context for the devices and attacker images is ./services (so both can COPY shared/).
+# Keep the context tiny: only source is needed.
+**/__pycache__
+**/*.pyc
+**/*.pyo

@@ -33,9 +33,10 @@ case "$CMD" in
     ;;
   dataset)   run python -m src.dataset "$@" ;;
   datacheck) run python -m src.datacheck.check "$@" ;;
+  test)      run python -m unittest discover -s tests/pipeline -p 'test_*.py' -v ;;
   shell)     run bash ;;
   *)
-    echo "usage: analysis.sh {features <session>|dataset|datacheck|shell}" >&2
+    echo "usage: analysis.sh {features <session>|dataset|datacheck|test|shell}" >&2
     exit 2
     ;;
 esac

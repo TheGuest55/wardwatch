@@ -6,6 +6,7 @@ import json
 import time
 
 import paho.mqtt.client as mqtt
+from payloads import monitor_vitals
 
 from .creds import pick_creds
 from .. import util
@@ -14,10 +15,12 @@ from .. import util
 def _payload(ctx, bed, implausible):
     hr = ctx.rng.choice([220, 20, 0]) if implausible else ctx.rng.randint(60, 100)
     spo2 = ctx.rng.choice([60, 40]) if implausible else ctx.rng.randint(94, 100)
-    return {"device": "patient-monitor", "bed": bed, "ts": util.utc_iso(),
-            "hr": hr, "spo2": spo2,
-            "bp_sys": ctx.rng.randint(90, 140), "bp_dia": ctx.rng.randint(60, 90),
-            "vitals_source": "bidmc", "bp_source": "synthetic"}
+    # Same builder as the real monitor (services/shared/payloads.py): identical field order and
+    # value representation (hr/spo2 coerced to 1-dp floats, device ts format), so spoofed vitals
+    # are not separable from benign by payload size or a per-field token (review B2).
+    return monitor_vitals(bed, hr, spo2,
+                          ctx.rng.randint(90, 140), ctx.rng.randint(60, 90),
+                          vitals_source="bidmc")
 
 
 def spoof_vitals(ctx, params):

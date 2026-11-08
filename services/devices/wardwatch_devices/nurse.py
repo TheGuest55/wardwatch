@@ -5,8 +5,9 @@ import json
 import os
 import time
 
+from payloads import pump_command
+
 from .base import Device
-from .noise import utcnow
 
 
 class Nurse(Device):
@@ -44,11 +45,12 @@ class Nurse(Device):
 
     def send_command(self):
         bed = self.noise.rng.randint(1, self.beds)
+        # Shared builder (services/shared/payloads.py); the attacker's pump_cmd uses the same one,
+        # so an unauthorised command is not separable from a legitimate one by payload shape.
         if self.noise.rng.random() < 0.5:
-            cmd = {"action": "set_rate", "rate": self.noise.rng.choice([75, 100, 125, 150])}
+            cmd = pump_command("set_rate", rate=self.noise.rng.choice([75, 100, 125, 150]))
         else:
-            cmd = {"action": "ack_alarm"}
-        cmd["ts"] = utcnow()
+            cmd = pump_command("ack_alarm")
         self.publish(f"ward1/bed{bed}/pump/cmd", cmd)
         self.noise.log_event("nurse_command", bed=bed, action=cmd["action"],
                              rate=cmd.get("rate"))
