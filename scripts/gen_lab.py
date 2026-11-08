@@ -107,6 +107,10 @@ def device_service(h, cfg):
         "REALISM_REBOOT": "1" if noise["reboot"] else "0",
         "SAMPLING_DRIFT": str(noise["sampling_drift"]),
         "REBOOT_PER_HOUR": str(noise["reboot_per_hour"]),
+        # Seeded quick reconnects (M8). Defaults keep a device's CONNECT recurring every 1-2.5 min so
+        # an arp_mitm window overlaps one; dry runs export shorter values. Nurse uses NURSE_RECONNECT_*.
+        "DEVICE_RECONNECT_MIN": "${DEVICE_RECONNECT_MIN:-60}",
+        "DEVICE_RECONNECT_MAX": "${DEVICE_RECONNECT_MAX:-150}",
     }
     vols = ["./data/raw/sessions:/data/sessions"]
     if "bidmc" in h:

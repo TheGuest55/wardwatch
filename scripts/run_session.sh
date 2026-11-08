@@ -46,6 +46,9 @@ if [ "$MODE" = dry ]; then
   export NURSE_CMD_INTERVAL="$(python3 -c "import json;print(json.load(open('config/ward.json')).get('dry_run',{}).get('nurse_cmd_interval',''))")"
   export NURSE_RECONNECT_MIN="$(python3 -c "import json;print(json.load(open('config/ward.json')).get('dry_run',{}).get('reconnect_min',120))")"
   export NURSE_RECONNECT_MAX="$(python3 -c "import json;print(json.load(open('config/ward.json')).get('dry_run',{}).get('reconnect_max',240))")"
+  # Short device reconnects so a dry run exercises arp_mitm credential capture (M8).
+  export DEVICE_RECONNECT_MIN="${DEVICE_RECONNECT_MIN:-20}"
+  export DEVICE_RECONNECT_MAX="${DEVICE_RECONNECT_MAX:-40}"
 elif [ "$MODE" = normal ]; then
   SCHED="${SCHEDULE:-schedules/normal_only.json}"; PRE_ROLL="${PRE_ROLL:-7200}"; POST_ROLL="${POST_ROLL:-0}"
 else

@@ -5,7 +5,7 @@ recorded to stolen_creds.json (the real value is taken from the provisioned file
 point for the dataset is the attack traffic + label, not decoding the password byte-stream)."""
 import time
 
-from .. import util
+from .. import capture_check, util
 
 
 def arp_mitm(ctx, params):
@@ -29,19 +29,23 @@ def arp_mitm(ctx, params):
     sniff.terminate()
     time.sleep(2)
 
-    # Best-effort: did the victim's CONNECT (carrying its username in cleartext) traverse us?
-    _, out, _ = util.run(
-        ["sh", "-c", f"tcpdump -r {pcap} -A 2>/dev/null | grep -c {victim} || true"], timeout=30)
-    seen = out.strip().isdigit() and int(out.strip()) > 0
+    # Truthful check (review M8): parse the captured pcap for a genuine MQTT CONNECT carrying the
+    # victim's identity. The old code grep'd `tcpdump -A` without `-n`, so hostname resolution made
+    # it always report seen=True. A reconnect of the victim during the window (devices now reconnect
+    # periodically) is what makes this land; if none occurs, we honestly report capture not observed.
+    seen = capture_check.victim_connect_seen(pcap, victim)
 
     recovered = {}
     if seen and ctx.provisioned(victim):
         recovered[victim] = {"password": ctx.provisioned(victim), "via": "arp_mitm"}
         ctx.save_stolen(recovered)
-    return {"targets": [victim_ip, broker],
-            "outcome": "success" if recovered else "fail",
-            "notes": f"arpspoof {victim}<->broker {duration}s; connect_seen={seen}; "
-                     f"recovered={sorted(recovered)}; arp restored"}
+    outcome = "success" if seen else "fail"
+    note = (f"arpspoof {victim}<->broker {duration}s; connect_seen={seen}; "
+            f"recovered={sorted(recovered)}; arp restored") if seen else \
+        (f"arpspoof {victim}<->broker {duration}s; MITM established, victim CONNECT not observed "
+         f"in-window (no credential capture); arp restored")
+    return {"targets": [victim_ip, broker], "outcome": outcome,
+            "params_out": {"connect_seen": seen}, "notes": note}
 
 
 arp_mitm.STAGE = "credential-access"

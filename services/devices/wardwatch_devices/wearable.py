@@ -2,7 +2,7 @@
 with occasional disconnect/reconnect (modelled as a reboot)."""
 import time
 
-from .base import Device
+from .base import Device, _reschedule
 from .monitor import vitals_source
 from .noise import utcnow
 
@@ -24,10 +24,15 @@ class Wearable(Device):
     def run(self):
         self.start()
         topic = f"ward1/bed{self.bed}/wearable/vitals"
+        next_reconnect = _reschedule(self.noise)
         while True:
             gap = self.noise.rng.uniform(5, 30)
             if self.noise.due_for_reboot(gap):
                 self.reboot()
+                next_reconnect = _reschedule(self.noise)
+            elif next_reconnect is not None and time.monotonic() >= next_reconnect:
+                self.reconnect()
+                next_reconnect = _reschedule(self.noise)
             batch = self.batch()
             # buffering delay: time spent collecting the batch before the burst
             time.sleep(min(gap, batch["count"]))

@@ -38,6 +38,10 @@ class Noise:
         # one fixed drift factor per device for the whole run
         self.rate_factor = 1.0 + self.rng.uniform(-drift, drift) if drift else 1.0
         self.reboot_per_hour = float(os.environ.get("REBOOT_PER_HOUR", "0") or 0)
+        # Seeded quick reconnects (M8): a fresh CONNECT recurs on the wire so an in-path attacker can
+        # observe the victim's credentials, and wildcard SUBSCRIBE recurs. 0 => disabled.
+        self.reconnect_min = float(os.environ.get("DEVICE_RECONNECT_MIN", "0") or 0)
+        self.reconnect_max = float(os.environ.get("DEVICE_RECONNECT_MAX", "0") or 0)
         sid = os.environ.get("SESSION_ID", "").strip()
         self.session_dir = f"/data/sessions/{sid}" if sid else ""
 
@@ -55,6 +59,12 @@ class Noise:
 
     def offline_seconds(self):
         return self.rng.uniform(10, 60)
+
+    def next_reconnect_in(self):
+        """Seeded seconds until the next quick reconnect, or None if reconnects are disabled."""
+        if self.reconnect_min <= 0 or self.reconnect_max < self.reconnect_min:
+            return None
+        return self.rng.uniform(self.reconnect_min, self.reconnect_max)
 
     def _emit(self, rec):
         line = json.dumps(rec)
