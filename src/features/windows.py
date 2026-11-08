@@ -35,7 +35,7 @@ class _Acc:
         "connack_fail", "clientid_reuse", "wildcard_subs", "topic_depth_max", "is_command_pub",
         "arp_req", "arp_reply", "arp_gratuitous",
         "vital_max_jump", "vital_jump_count", "implausible",
-        "touches_attacker", "ip_counts",
+        "touches_attacker", "ip_counts", "flows",
     )
 
     def __init__(self):
@@ -59,10 +59,23 @@ class _Acc:
         self.implausible = 0
         self.touches_attacker = False
         self.ip_counts = {}
+        self.flows = set()        # distinct transport flow keys active in this (mac, window)
 
 
 def _topic_depth(topic):
     return topic.count("/") + 1 if topic else 0
+
+
+def _flow_key(rec):
+    """Direction-agnostic transport-flow key for an IPv4 TCP/UDP packet, or None. Endpoints are
+    sorted so both directions map to one flow (like NFStream's bidirectional flows). ARP/ICMP and
+    non-IP packets have no flow (NFStream ignores ARP; the L2/ARP features cover that signal)."""
+    if rec["l3"] != "ip" or rec["l4"] not in ("tcp", "udp"):
+        return None
+    a = (rec.get("ip_src"), rec.get("sport"))
+    b = (rec.get("ip_dst"), rec.get("dport"))
+    lo, hi = (a, b) if a <= b else (b, a)
+    return (rec["l4"], lo, hi)
 
 
 def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
@@ -75,6 +88,7 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
     clientid_owner = {}           # client_id -> first MAC that used it
     ip_to_mac = {}               # running IP->MAC map (latest), for conflict detection
     conflict_windows = set()
+    flow_first_seen = {}          # flow_key -> epoch of its first packet (causal; never the future)
     plaus = PlausibilityTracker()
 
     def get(mac, win):
@@ -95,6 +109,14 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
             or rec.get("ip_src") == attacker_ip or rec.get("ip_dst") == attacker_ip
         )
 
+        # ---- causal transport-flow tracking (review B1) ----
+        # Record each flow's first-seen time and mark it active in this window for both endpoints.
+        # Flow age is computed at finalize as (window_end - first_seen), so it only ever reflects
+        # elapsed time up to the window end — never the flow's whole future lifetime.
+        fkey = _flow_key(rec)
+        if fkey is not None and fkey not in flow_first_seen:
+            flow_first_seen[fkey] = rec["ts"]
+
         # ---- sender side ----
         a = get(src, win)
         a.pkts_sent += 1
@@ -109,6 +131,8 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
             a.ip_counts[rec["ip_src"]] = a.ip_counts.get(rec["ip_src"], 0) + 1
         if attacker_peer:
             a.touches_attacker = True
+        if fkey is not None:
+            a.flows.add(fkey)
 
         l3, l4 = rec["l3"], rec["l4"]
         if l3 == "arp":
@@ -155,6 +179,8 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
                 b.peer_ips.add(peer_ip_for_dst)
             if attacker_peer:
                 b.touches_attacker = True
+            if fkey is not None:
+                b.flows.add(fkey)
 
         # ---- L2 conflict tracking (IP mapped to >1 MAC within a window) ----
         claim_ip, claim_mac = None, None
@@ -168,7 +194,7 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
                 conflict_windows.add(win)
             ip_to_mac[claim_ip] = claim_mac
 
-    rows = [_finalize(mac, win, a, session, ip_roles, win in conflict_windows)
+    rows = [_finalize(mac, win, a, session, ip_roles, win in conflict_windows, flow_first_seen)
             for (mac, win), a in acc.items()]
     return rows, conflict_windows
 
@@ -209,7 +235,7 @@ def _accumulate_mqtt(a, rec, src_mac, clientid_owner, plaus):
                     a.wildcard_subs += 1
 
 
-def _finalize(mac, win, a, session, ip_roles, conflict):
+def _finalize(mac, win, a, session, ip_roles, conflict, flow_first_seen):
     sizes = np.array(a.sizes, dtype=float) if a.sizes else np.array([0.0])
     tss = sorted(a.ts)
     iats = np.diff(tss) if len(tss) > 1 else np.array([0.0])
@@ -217,6 +243,14 @@ def _finalize(mac, win, a, session, ip_roles, conflict):
     host_ip = max(a.ip_counts, key=a.ip_counts.get) if a.ip_counts else None
     mqtt_total = sum(a.mqtt_counts.values())
     payloads = np.array(a.mqtt_payloads, dtype=float) if a.mqtt_payloads else np.array([0.0])
+
+    # Causal flow features (review B1): computed from packets seen up to this window's end only.
+    win_end = win + common.WINDOW_SECONDS
+    nf_active_flows = len(a.flows)
+    nf_new_flows = sum(1 for k in a.flows
+                       if common.window_start(flow_first_seen[k]) == win)
+    ages = [max(0.0, win_end - flow_first_seen[k]) for k in a.flows]
+    nf_mean_flow_age = float(np.mean(ages)) if ages else 0.0
 
     return {
         # --- metadata (never model inputs) ---
@@ -281,5 +315,8 @@ def _finalize(mac, win, a, session, ip_roles, conflict):
         "vital_max_jump": float(a.vital_max_jump),
         "vital_jump_count": a.vital_jump_count,
         "implausible_vital": a.implausible,
-        # NFStream enrichment columns are added later by extract.py (NaN if unavailable).
+        # --- features: causal flow stats (review B1; live-computable, no future lifetime) ---
+        "nf_active_flows": nf_active_flows,
+        "nf_new_flows": nf_new_flows,
+        "nf_mean_flow_age": nf_mean_flow_age,
     }

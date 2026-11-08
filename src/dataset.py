@@ -109,7 +109,7 @@ def build(split_path, force, include_dry):
         "features": features,
         "metadata": _metadata_columns(full),
         "testbed_only": [c for c in common.TESTBED_ONLY_FEATURES if c in features],
-        "nfstream": [c for c in common.NFSTREAM_FEATURES if c in features],
+        "flow_features": [c for c in common.FLOW_FEATURES if c in features],
     }
     (common.PROCESSED_DIR / "feature_list.json").write_text(json.dumps(feature_list, indent=2))
 

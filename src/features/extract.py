@@ -4,20 +4,20 @@ Usage (inside the analysis container):
     python -m src.features.extract --session t02 [--out data/processed/sessions/t02.parquet]
 
 Streams every pcap in the session (so session-wide state like client-id ownership persists),
-builds per-host-window features, enriches with NFStream flow counts when available, labels each
+builds per-host-window features (incl. causal flow stats), labels each
 window from ground_truth.jsonl, and writes a per-session parquet. dataset.py concatenates these.
 """
 import argparse
 import itertools
 import json
-import math
+
 import sys
 
 import numpy as np
 import pandas as pd
 
 from .. import common
-from . import packets, windows, nfstream_flows
+from . import packets, windows
 from ..labels import label as labelling
 
 
@@ -52,36 +52,10 @@ def extract_session(session):
     rows, conflict_windows = windows.build_rows(
         packet_iter, session, attacker_mac, attacker_ip, ip_roles)
 
-    # NFStream enrichment (optional): sum per-pcap flow features onto (mac, window).
-    nf = {}
-    nf_available = nfstream_flows.AVAILABLE
-    if nf_available:
-        for p in pcaps:
-            part = nfstream_flows.window_flow_features(p)
-            if part is None:
-                nf_available = False
-                break
-            for key, cell in part.items():
-                tgt = nf.setdefault(key, {"nf_active_flows": 0, "nf_new_flows": 0, "nf_dur_sum": 0.0})
-                for k, v in cell.items():
-                    tgt[k] += v
-
-    for r in rows:
-        key = (r["host_mac"], r["window_start_epoch"])
-        if nf_available and key in nf:
-            cell = nf[key]
-            r["nf_active_flows"] = cell["nf_active_flows"]
-            r["nf_new_flows"] = cell["nf_new_flows"]
-            r["nf_mean_flow_dur"] = (cell["nf_dur_sum"] / cell["nf_active_flows"]
-                                     if cell["nf_active_flows"] else 0.0)
-        elif nf_available:
-            r["nf_active_flows"] = 0
-            r["nf_new_flows"] = 0
-            r["nf_mean_flow_dur"] = 0.0
-        else:
-            r["nf_active_flows"] = math.nan
-            r["nf_new_flows"] = math.nan
-            r["nf_mean_flow_dur"] = math.nan
+    # Flow features (nf_active_flows/nf_new_flows/nf_mean_flow_age) are now computed causally inside
+    # windows.build_rows (review B1): per window, from packets seen up to the window end only — so
+    # they are live-computable and never encode a flow's whole future lifetime. nfstream_flows.py is
+    # retained as an optional offline diagnostic (not on the model path) and is not used here.
 
     df = pd.DataFrame(rows)
     df = labelling.apply_labels(df, intervals)
@@ -93,7 +67,6 @@ def extract_session(session):
         "dry_run": dry_run,
         "n_rows": len(df),
         "n_pcaps": len(pcaps),
-        "nfstream": nf_available,
         "n_runs": len(intervals),
         "attacker_mac": attacker_mac,
         "attacker_ip": attacker_ip,
@@ -119,9 +92,6 @@ def main():
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out, index=False)
 
-    if not info["nfstream"]:
-        print("[DATA] nfstream unavailable in image; nf_* flow features left NaN "
-              "(per-window stats from packets are unaffected)", file=sys.stderr)
     print(json.dumps({**info, "out": out}, indent=2, default=str))
     # Sanity surfaced immediately: every non-dry run should land >=1 attack window.
     if not info["dry_run"]:

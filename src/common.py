@@ -32,10 +32,14 @@ TESTBED_ONLY_FEATURES = [
     "vital_max_jump", "vital_jump_count", "implausible_vital",
 ]
 
-# Optional features contributed by NFStream; NaN when nfstream is unavailable in the image.
-NFSTREAM_FEATURES = [
-    "nf_active_flows", "nf_new_flows", "nf_mean_flow_dur",
+# Causal transport-flow features, computed per window from packets seen up to the window end only
+# (src/features/windows.py). Review B1 replaced NFStream's whole-lifetime flow aggregates (which
+# leaked the future and acted as a host-lifetime identifier) with these live-computable stats.
+FLOW_FEATURES = [
+    "nf_active_flows", "nf_new_flows", "nf_mean_flow_age",
 ]
+# Back-compat alias (older report/datacheck code referenced this name).
+NFSTREAM_FEATURES = FLOW_FEATURES
 
 
 def load_config():
