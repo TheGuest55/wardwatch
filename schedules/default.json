@@ -6,7 +6,7 @@
     { "class": "syn_flood",    "params": { "pps": 1000, "duration_range": [20, 45] } },
     { "class": "mqtt_flood",   "params": { "conn_per_s": 50, "duration_range": [20, 45] } },
     { "class": "bruteforce",   "params": { "delay": 0.3, "wordlist_len": 150 } },
-    { "class": "arp_mitm",     "params": { "duration_range": [60, 120] } },
+    { "class": "arp_mitm",     "params": { "duration_range": [120, 180] } },
     { "class": "eavesdrop",    "params": { "duration_range": [120, 480] } },
     { "class": "spoof_vitals", "params": { "duration_range": [45, 120] } },
     { "class": "pump_cmd",     "params": { "duration_range": [45, 90], "cmds_per_min": 10, "dangerous_frac": 0.25 } }

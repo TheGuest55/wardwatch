@@ -70,8 +70,26 @@ json.dump({"session": cid, "dry_run": dry, "schedule": sched, "seed": seed,
 PY
 cp "$SCHED" "$SDIR/schedule.json"
 
+# Regenerate the compose/.env/ACLs from current code BEFORE bringing the ward up, so the running
+# stack always matches the committed generation code regardless of launch path. gen_lab preserves
+# existing .env passwords (deterministic). Without this, a stale compose silently drops newly-added
+# env (e.g. DEVICE_RECONNECT_*), which made arp_mitm's capture mechanism dormant in t10/t11.
+echo "[$ID] regenerating lab config (compose/.env/acl)"
+python3 scripts/gen_lab.py >/dev/null
+
 echo "[$ID] bringing ward up (dry_run=$DRY, schedule=$SCHED)"
 SESSION_ID="$ID" SEED="$SEED" docker compose up -d --build --remove-orphans >/dev/null
+
+# Guarantee the device-reconnect mechanism is actually wired (so arp_mitm can capture a victim
+# CONNECT). A non-empty DEVICE_RECONNECT_MIN in a live device proves the env reached the container.
+rc_min="$(docker compose exec -T bed1-monitor printenv DEVICE_RECONNECT_MIN 2>/dev/null || true)"
+if [ -z "${rc_min//[$'\t\r\n ']/}" ]; then
+  echo "[$ID] ABORT: DEVICE_RECONNECT_MIN not set in bed1-monitor — reconnects would be disabled " \
+       "and arp_mitm could never capture. Compose did not pick up the reconnect env." >&2
+  docker compose down --remove-orphans >/dev/null 2>&1 || true
+  exit 1
+fi
+echo "[$ID] device reconnects wired (DEVICE_RECONNECT_MIN=$rc_min)"
 # Record provenance (M9): exact git commit + built-image digests, since tags don't distinguish code.
 python3 scripts/record_provenance.py "$SDIR/config.json" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 echo "[$ID] pre-roll normal traffic: ${PRE_ROLL}s"

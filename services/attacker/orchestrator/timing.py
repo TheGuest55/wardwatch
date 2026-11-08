@@ -9,7 +9,7 @@ import time
 # Nominal durations (seconds) for classes whose runtime isn't a fixed param, used only for the
 # timeline estimate. Actual runtime varies (e.g. bruteforce depends on guesses).
 NOMINAL = {"recon_scan": 90, "syn_flood": 30, "mqtt_flood": 30, "bruteforce": 15,
-           "arp_mitm": 90, "eavesdrop": 180, "spoof_vitals": 60, "pump_cmd": 60}
+           "arp_mitm": 150, "eavesdrop": 180, "spoof_vitals": 60, "pump_cmd": 60}
 
 
 def session_rng(base_seed, session_id):
