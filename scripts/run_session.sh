@@ -72,6 +72,8 @@ cp "$SCHED" "$SDIR/schedule.json"
 
 echo "[$ID] bringing ward up (dry_run=$DRY, schedule=$SCHED)"
 SESSION_ID="$ID" SEED="$SEED" docker compose up -d --build --remove-orphans >/dev/null
+# Record provenance (M9): exact git commit + built-image digests, since tags don't distinguish code.
+python3 scripts/record_provenance.py "$SDIR/config.json" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 echo "[$ID] pre-roll normal traffic: ${PRE_ROLL}s"
 sleep "$PRE_ROLL"
 

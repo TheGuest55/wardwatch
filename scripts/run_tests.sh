@@ -8,8 +8,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TIER="${1:-all}"
-# Paho-free source roots so `import payloads`, `wardwatch_devices.noise`, `orchestrator.timing` work.
-export PYTHONPATH="services/shared:services/devices:services/attacker${PYTHONPATH:+:$PYTHONPATH}"
+# Paho-free source roots so `import payloads`, `wardwatch_devices.noise`, `orchestrator.timing`,
+# `record_provenance` work (plus the repo root, on sys.path via cwd, for `src.*`).
+export PYTHONPATH="services/shared:services/devices:services/attacker:scripts${PYTHONPATH:+:$PYTHONPATH}"
 
 run_generation() {
   echo "== generation tests (host python) =="
