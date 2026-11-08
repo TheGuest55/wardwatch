@@ -1,0 +1,14 @@
+{
+  "gap_min": 5,
+  "gap_max": 8,
+  "runs": [
+    { "class": "recon_scan",   "params": { "max_rate": 1000, "timeout": 20 } },
+    { "class": "syn_flood",    "params": { "pps": 500, "duration": 8 } },
+    { "class": "mqtt_flood",   "params": { "conn_per_s": 30, "duration": 8 } },
+    { "class": "bruteforce",   "params": { "delay": 0.1 } },
+    { "class": "arp_mitm",     "params": { "duration": 45 } },
+    { "class": "eavesdrop",    "params": { "duration": 15 } },
+    { "class": "spoof_vitals", "params": { "duration": 30 } },
+    { "class": "pump_cmd",     "params": { "duration": 30, "cmds_per_min": 30, "dangerous_frac": 0.25 } }
+  ]
+}
