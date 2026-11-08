@@ -160,6 +160,9 @@ def _service(name, image, env, ip=None, build=None, cpus=None, mem=None, depends
         out.append(f"    cpus: {cpus}")
     if mem is not None:
         out.append(f"    mem_limit: {mem}")
+    # init: true -> tini as PID 1 reaps and forwards SIGTERM so `docker compose stop` actually stops
+    # the container (review M1: nurse-station ignored docker stop and needed a kill).
+    out.append("    init: true")
     out.append("    restart: unless-stopped")
     return "\n".join(out)
 

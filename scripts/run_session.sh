@@ -8,12 +8,26 @@
 # dry_run=true in config.json, and are excluded from the dataset.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. "$(dirname "$0")/lib/lab_guard.sh"
 
 ID="${1:-}"
 [ -n "$ID" ] || { echo "usage: run_session.sh <session-id>" >&2; exit 2; }
 SDIR="data/raw/sessions/$ID"
 if [ -e "$SDIR" ]; then
   echo "session $ID already exists at $SDIR; refusing to overwrite" >&2
+  exit 1
+fi
+
+# Isolation guards (review M1): never record on top of a lingering stack or alongside a second
+# capture (a stray Phase-1 lab was found writing data/raw/pcap from another Docker engine).
+if project_containers_present; then
+  echo "refusing to start $ID: wardwatch containers still exist — tear them down first:" >&2
+  project_containers >&2
+  exit 1
+fi
+if pcap_changed_within data/raw/pcap 300; then
+  echo "refusing to start $ID: data/raw/pcap changed in the last 5 min — another capture may be " \
+       "running (not this VM's). Stop it and check before recording; I will not touch those files." >&2
   exit 1
 fi
 
@@ -66,6 +80,16 @@ docker compose exec -T -e SEED="$SEED" attacker \
 echo "[$ID] post-roll normal traffic: ${POST_ROLL}s"
 sleep "$POST_ROLL"
 
-docker compose stop capture >/dev/null    # finalise the pcap before hashing
+# Stop the WHOLE stack before hashing so no device writes into the session dir during or after the
+# manifest (review M1: devices kept running with SESSION_ID and grew benign_events past manifest time).
+echo "[$ID] stopping ward before hashing"
+docker compose stop >/dev/null
 python3 scripts/merge_session.py "$SDIR"
+# Tear down so nothing is left running (and the next session's start guard stays clean).
+docker compose down --remove-orphans >/dev/null
+if project_containers_present; then
+  echo "[$ID] WARNING: wardwatch containers remain after 'compose down':" >&2
+  project_containers >&2
+  exit 1
+fi
 echo "[$ID] complete"
