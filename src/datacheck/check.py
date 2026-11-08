@@ -11,6 +11,7 @@ and legit nurse pump-command count; hosts/window and missing/inf per feature; an
 otherwise": if identifiers/time dominate, the report flags it instead of celebrating.
 """
 import argparse
+import hashlib
 import json
 from collections import Counter
 
@@ -19,6 +20,56 @@ import pandas as pd
 
 from .. import common
 from ..labels import label as labelling
+
+
+# ----------------------------- integrity -----------------------------
+
+def manifest_verify(session):
+    """Re-verify a session's manifest.json SHA-256 against the files on disk (review M10). Returns
+    {ok, n_files, mismatches, missing, unlisted} — empty lists mean the session verifies."""
+    sdir = common.SESSIONS_DIR / session
+    man_path = sdir / "manifest.json"
+    if not man_path.exists():
+        return {"ok": False, "n_files": 0, "mismatches": [], "missing": ["manifest.json"],
+                "unlisted": []}
+    manifest = json.loads(man_path.read_text())
+    listed = manifest.get("files", manifest) if isinstance(manifest, dict) else {}
+    # Accept either {"files": {path: sha}} or {path: sha}.
+    if "files" in manifest and isinstance(manifest["files"], dict):
+        listed = manifest["files"]
+    elif all(isinstance(v, str) for v in manifest.values()):
+        listed = manifest
+    mismatches, missing = [], []
+    for rel, expected in sorted(listed.items()):
+        fp = sdir / rel
+        if not fp.exists():
+            missing.append(rel)
+            continue
+        h = hashlib.sha256()
+        with open(fp, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        if h.hexdigest() != expected:
+            mismatches.append(rel)
+    return {"ok": not (mismatches or missing), "n_files": len(listed),
+            "mismatches": mismatches, "missing": missing, "unlisted": []}
+
+
+def attack_windows_within_intervals(df, session):
+    """Review M10 (real check): every attack-labelled window must lie fully inside some logged
+    attack interval (by time, not by run_id — the run_id check was circular). Returns the count of
+    attack rows whose [w, w+WINDOW) is not contained in any ground-truth interval for the session."""
+    sdir = common.SESSIONS_DIR / session
+    intervals, _, _ = labelling.load_ground_truth(sdir)
+    # load_ground_truth already converts each interval's start/end to epoch seconds.
+    spans = [(iv["start"], iv["end"]) for iv in intervals if "start" in iv and "end" in iv]
+    W = common.WINDOW_SECONDS
+    atk = df[(df["session"] == session) & (df["label"] == "attack")]
+    outside = 0
+    for w in atk["window_start_epoch"]:
+        if not any(s <= w and (w + W) <= e for s, e in spans):
+            outside += 1
+    return outside
 
 
 # ----------------------------- gather -----------------------------
@@ -133,6 +184,25 @@ def leakage_probe(df, feature_list):
             "accuracy": round(float(accuracy_score(y[te], pred)), 4),
             "top15": [[n, round(float(v), 4)] for n, v in imp],
         }
+        # Identifier-proxy check (review M10): a top feature that alone near-perfectly predicts
+        # "this row is the attacker host" is acting as an identity/lifetime proxy (the failure mode
+        # behind B1 and n4), not generalisable attack signal. Flag any top-15 feature whose
+        # single-feature ROC-AUC against the attacker-host target on train is ~1.
+        from sklearn.metrics import roc_auc_score
+        atk_host = (df["host_role"] == "attacker").astype(int)
+        proxies = []
+        if atk_host[tr].nunique() == 2:
+            for name, _v in imp:
+                col = X.loc[tr, name].to_numpy(dtype=float)
+                try:
+                    auc = roc_auc_score(atk_host[tr].to_numpy(), col)
+                except ValueError:
+                    continue
+                auc = max(auc, 1.0 - auc)   # direction-agnostic
+                if auc >= 0.999:
+                    proxies.append([name, round(float(auc), 4)])
+        out["attacker_host_proxies"] = proxies
+
         te_df = df[te]
         atk_classes = sorted(te_df.loc[te_df["label"] == "attack", "attack_class"].dropna().unique())
         recall, support = {}, {}
@@ -222,7 +292,7 @@ def run(out_path):
     lines += ["## Ground-truth run coverage", "",
               "Every logged run should produce >=1 attack window; no attack window should carry a "
               "run_id that isn't in ground truth.", ""]
-    all_runs, run_issue = set(), False
+    all_runs, run_issue, outside_issue = set(), False, False
     for s in sessions:
         sdir = common.SESSIONS_DIR / s
         intervals, _, _ = labelling.load_ground_truth(sdir)
@@ -231,13 +301,33 @@ def run(out_path):
         got = set(df[(df["session"] == s) & (df["label"] == "attack")]["run_id"])
         no_window = gt_runs - got
         orphan = got - gt_runs
+        # Review M10: a direct timestamp check (not the circular run_id test) — attack windows must
+        # lie fully inside a logged interval.
+        outside = attack_windows_within_intervals(df, s)
         if no_window or orphan:
             run_issue = True
+        if outside:
+            outside_issue = True
         if gt_runs:
             lines.append(f"- {s}: {len(gt_runs)} runs, "
                          f"{len(got & gt_runs)} with >=1 window"
                          + (f"; NO WINDOW: {sorted(no_window)}" if no_window else "")
-                         + (f"; ORPHAN run_id: {sorted(orphan)}" if orphan else ""))
+                         + (f"; ORPHAN run_id: {sorted(orphan)}" if orphan else "")
+                         + (f"; {outside} ATTACK WINDOWS OUTSIDE ANY INTERVAL" if outside
+                            else "; all attack windows within intervals"))
+    lines.append("")
+
+    # manifest re-verification (review M10): the recorded SHA-256 manifest must still match disk.
+    lines += ["## Manifest re-verification", "",
+              "Each session's manifest.json SHA-256 is re-checked against the files on disk.", ""]
+    manifest_issue = False
+    for s in sessions:
+        mv = manifest_verify(s)
+        if not mv["ok"]:
+            manifest_issue = True
+        lines.append(f"- {s}: {mv['n_files']} files -> "
+                     + ("OK" if mv["ok"]
+                        else f"MISMATCH {mv['mismatches']} MISSING {mv['missing']}"))
     lines.append("")
 
     # benign-event + legit-command counts per session
@@ -305,9 +395,13 @@ def run(out_path):
     for name, _imp in fo.get("top15", []):
         if name in feature_list.get("metadata", []):
             leak_flag = True
+    proxies = probe.get("attacker_host_proxies") or []
     lines += ["", f"- split used: {'RANDOM 70/30 fallback (no real train/test yet)' if probe['split_fallback_random'] else 'time-based train/test'}",
               f"- metadata-only F1: {fo and probe['metadata_only']}",
-              f"- any metadata column among top-15 features: {'YES — INVESTIGATE' if leak_flag else 'no'}", ""]
+              f"- any metadata column among top-15 features: {'YES — INVESTIGATE' if leak_flag else 'no'}",
+              f"- top features that alone near-perfectly identify the attacker host "
+              f"(single-feature AUC>=0.999 vs attacker-host): "
+              f"{proxies if proxies else 'none'}", ""]
 
     # verdict
     problems = []
@@ -315,10 +409,16 @@ def run(out_path):
         problems.append("a class is missing from a split")
     if run_issue:
         problems.append("a run has no window or an orphan run_id exists")
+    if outside_issue:
+        problems.append("an attack window falls outside every logged interval")
+    if manifest_issue:
+        problems.append("a session manifest no longer verifies")
     if be_issue:
         problems.append("a session has zero reconnects or zero nurse commands")
     if leak_flag:
         problems.append("a metadata column leaked into the top features")
+    if proxies:
+        problems.append("a top feature alone near-perfectly identifies the attacker host")
     lines = (["> **Verdict:** " + ("PASS" if not problems else "REVIEW — " + "; ".join(problems)),
               ""] + lines)
 
