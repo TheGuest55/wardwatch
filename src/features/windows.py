@@ -152,44 +152,19 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
         if fkey is not None:
             a.flows.add(fkey)
 
-        l3, l4 = rec["l3"], rec["l4"]
-        if l3 == "arp":
-            a.n_arp += 1
-            op = rec.get("arp_op")
-            if op == 1:
-                a.arp_req += 1
-            elif op == 2:
-                a.arp_reply += 1
-                if rec.get("arp_psrc") and rec.get("arp_psrc") == rec.get("arp_pdst"):
-                    a.arp_gratuitous += 1
-        elif l4 == "tcp":
-            a.n_tcp += 1
-            if rec.get("dport"):
-                a.contacted_ports.add(rec["dport"])
-            syn, ack = rec.get("syn"), rec.get("ack")
-            if syn and ack:
-                a.tcp_synack += 1
-            elif syn:
-                a.tcp_syn += 1
-            if rec.get("rst"):
-                a.tcp_rst += 1
-            if rec.get("fin"):
-                a.tcp_fin += 1
+        # Protocol/flag counts cover every packet the host sends OR receives (./CLAUDE.md
+        # granularity; review M4). Sender side also records MQTT message counts and the stateful
+        # MQTT signals (client-id ownership, payload plausibility).
+        _count_proto_flags(a, rec, is_sender=True)
+        if rec["l4"] == "tcp":
             # Release client-id ownership when its connection closes (FIN/RST), either direction.
             if rec.get("rst") or rec.get("fin"):
                 conn = _mqtt_conn_key(rec)
                 held_cid = conn_cid.pop(conn, None) if conn else None
                 if held_cid is not None and active_cid.get(held_cid) == conn:
                     del active_cid[held_cid]
-            _accumulate_mqtt(a, rec, src, active_cid, conn_cid, plaus)
-        elif l4 == "udp":
-            a.n_udp += 1
-            if rec.get("dport"):
-                a.contacted_ports.add(rec["dport"])
-        elif l4 == "icmp":
-            a.n_icmp += 1
-        else:
-            a.n_other += 1
+            _count_mqtt(a, rec)
+            _stateful_mqtt(a, rec, active_cid, conn_cid, plaus)
 
         # ---- receiver side (unicast only) ----
         if not _is_groupcast(dst):
@@ -205,9 +180,16 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
                 b.touches_attacker = True
             if fkey is not None:
                 b.flows.add(fkey)
+            # Count received protocol/flags and MQTT messages too (review M4): a subscriber's or
+            # eavesdropper's received PUBLISHes, and failed CONNACKs a client receives, are otherwise
+            # invisible. Plausibility and client-id ownership stay sender-only (not re-scored here).
+            _count_proto_flags(b, rec, is_sender=False)
+            if rec["l4"] == "tcp":
+                _count_mqtt(b, rec)
 
         # ---- L2 conflict tracking (IP mapped to >1 MAC within a window) ----
         claim_ip, claim_mac = None, None
+        l3 = rec["l3"]
         if l3 == "arp" and rec.get("arp_op") == 2:
             claim_ip, claim_mac = rec.get("arp_psrc"), rec.get("arp_hwsrc") or src
         elif l3 == "ip" and rec.get("ip_src"):
@@ -227,13 +209,74 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
     return rows, conflict_windows
 
 
-def _accumulate_mqtt(a, rec, src_mac, active_cid, conn_cid, plaus):
+def _count_proto_flags(a, rec, is_sender):
+    """Per-packet protocol-mix and TCP-flag counts for one host (review M4: run on both the sender
+    and the receiver). `contacted_ports` is a sent-only notion (ports this host reached out to)."""
+    l3, l4 = rec["l3"], rec["l4"]
+    if l3 == "arp":
+        a.n_arp += 1
+        op = rec.get("arp_op")
+        if op == 1:
+            a.arp_req += 1
+        elif op == 2:
+            a.arp_reply += 1
+            if rec.get("arp_psrc") and rec.get("arp_psrc") == rec.get("arp_pdst"):
+                a.arp_gratuitous += 1
+    elif l4 == "tcp":
+        a.n_tcp += 1
+        if is_sender and rec.get("dport"):
+            a.contacted_ports.add(rec["dport"])
+        syn, ack = rec.get("syn"), rec.get("ack")
+        if syn and ack:
+            a.tcp_synack += 1
+        elif syn:
+            a.tcp_syn += 1
+        if rec.get("rst"):
+            a.tcp_rst += 1
+        if rec.get("fin"):
+            a.tcp_fin += 1
+    elif l4 == "udp":
+        a.n_udp += 1
+        if is_sender and rec.get("dport"):
+            a.contacted_ports.add(rec["dport"])
+    elif l4 == "icmp":
+        a.n_icmp += 1
+    else:
+        a.n_other += 1
+
+
+def _count_mqtt(a, rec):
+    """Pure MQTT message-type counting for one host; run on both sender and receiver (review M4).
+    No plausibility and no client-id ownership here — those are stateful and sender-only."""
+    for m in rec.get("mqtt", []):
+        a.mqtt_counts[m["type_name"]] = a.mqtt_counts.get(m["type_name"], 0) + 1
+        t = m["type"]
+        if t == mqtt.CONNECT:
+            a.mqtt_connect += 1
+        elif t == mqtt.CONNACK:
+            if m.get("return_code"):  # non-zero = connection refused
+                a.connack_fail += 1
+        elif t == mqtt.PUBLISH:
+            a.mqtt_publish += 1
+            a.mqtt_payloads.append(m.get("payload_size", 0))
+            topic = m.get("topic") or ""
+            a.topic_depth_max = max(a.topic_depth_max, _topic_depth(topic))
+            if topic.endswith("/cmd") or "/pump/cmd" in topic:
+                a.is_command_pub += 1
+        elif t == mqtt.SUBSCRIBE:
+            for tf in m.get("topics", []):
+                a.topic_depth_max = max(a.topic_depth_max, _topic_depth(tf))
+                if "+" in tf or "#" in tf:
+                    a.wildcard_subs += 1
+
+
+def _stateful_mqtt(a, rec, active_cid, conn_cid, plaus):
+    """Sender-only MQTT state: live client-id ownership/reuse (review M5) and payload plausibility
+    (testbed-only). Kept off the receiver so a forwarded/received copy is not re-scored."""
     conn = _mqtt_conn_key(rec)
     for m in rec.get("mqtt", []):
-        name = m["type_name"]
-        a.mqtt_counts[name] = a.mqtt_counts.get(name, 0) + 1
-        if m["type"] == mqtt.CONNECT:
-            a.mqtt_connect += 1
+        t = m["type"]
+        if t == mqtt.CONNECT:
             cid = m.get("client_id")
             if cid and conn:
                 held = active_cid.get(cid)
@@ -241,32 +284,18 @@ def _accumulate_mqtt(a, rec, src_mac, active_cid, conn_cid, plaus):
                     a.clientid_reuse += 1   # a different live connection currently holds this id
                 active_cid[cid] = conn
                 conn_cid[conn] = cid
-        elif m["type"] == mqtt.DISCONNECT:
+        elif t == mqtt.DISCONNECT:
             if conn is not None:
                 cid0 = conn_cid.pop(conn, None)
                 if cid0 is not None and active_cid.get(cid0) == conn:
                     del active_cid[cid0]
-        elif m["type"] == mqtt.CONNACK:
-            if m.get("return_code"):  # non-zero = connection refused
-                a.connack_fail += 1
-        elif m["type"] == mqtt.PUBLISH:
-            a.mqtt_publish += 1
-            a.mqtt_payloads.append(m.get("payload_size", 0))
-            topic = m.get("topic") or ""
-            a.topic_depth_max = max(a.topic_depth_max, _topic_depth(topic))
-            if topic.endswith("/cmd") or "/pump/cmd" in topic:
-                a.is_command_pub += 1
-            jump, bad = plaus.update(topic, m.get("app_payload", b""))
+        elif t == mqtt.PUBLISH:
+            jump, bad = plaus.update(m.get("topic") or "", m.get("app_payload", b""))
             if jump > a.vital_max_jump:
                 a.vital_max_jump = jump
             if bad:
                 a.vital_jump_count += 1
                 a.implausible = 1
-        elif m["type"] == mqtt.SUBSCRIBE:
-            for tf in m.get("topics", []):
-                a.topic_depth_max = max(a.topic_depth_max, _topic_depth(tf))
-                if "+" in tf or "#" in tf:
-                    a.wildcard_subs += 1
 
 
 def _finalize(mac, win, a, session, ip_roles, conflict, flow_first_seen, attacker_mac):
