@@ -103,6 +103,24 @@ def per_session_parquet(session, in_dir=None):
 
 # ----------------------------- leakage probe -----------------------------
 
+PROXY_AUC = 0.95       # single-feature ROC-AUC vs attacker-host at/above which a feature is a proxy
+ETA2_FLAG = 0.99       # per-session eta^2 at/above which a feature is a session fingerprint (leakage)
+
+
+def _eta_squared(x, g):
+    """Fraction of x's variance explained by grouping g (SS_between / SS_total), in [0, 1]. 1 means
+    x is constant within each group (an identity fingerprint); 0 means group tells you nothing."""
+    x = np.asarray(x, dtype=float)
+    ss_tot = float(((x - x.mean()) ** 2).sum())
+    if ss_tot == 0.0:
+        return 0.0
+    ss_between = 0.0
+    for lvl in np.unique(g):
+        xi = x[g == lvl]
+        ss_between += len(xi) * (xi.mean() - x.mean()) ** 2
+    return float(ss_between / ss_tot)
+
+
 def _binary_target(df):
     return (df["label"] == "attack").astype(int)
 
@@ -189,24 +207,44 @@ def leakage_probe(df, feature_list):
             "accuracy": round(float(accuracy_score(y[te], pred)), 4),
             "top15": [[n, round(float(v), 4)] for n, v in imp],
         }
-        # Identifier-proxy check (review M10): a top feature that alone near-perfectly predicts
-        # "this row is the attacker host" is acting as an identity/lifetime proxy (the failure mode
-        # behind B1 and n4), not generalisable attack signal. Flag any top-15 feature whose
-        # single-feature ROC-AUC against the attacker-host target on train is ~1.
+        # Identifier-proxy check (review N6): ANY feature (not just the top-15) whose single-feature
+        # ROC-AUC against the attacker-host target on train is >= PROXY_AUC is acting as an
+        # identity/lifetime proxy for the attacker rather than generalisable attack signal. The 0.95
+        # threshold is deliberately sensitive; the features-only-no-attacker F1 is the companion
+        # guard that detection doesn't merely exploit the attacker row.
         from sklearn.metrics import roc_auc_score
         atk_host = (df["host_role"] == "attacker").astype(int)
         proxies = []
         if atk_host[tr].nunique() == 2:
-            for name, _v in imp:
+            yv = atk_host[tr].to_numpy()
+            for name in feats:
                 col = X.loc[tr, name].to_numpy(dtype=float)
                 try:
-                    auc = roc_auc_score(atk_host[tr].to_numpy(), col)
+                    auc = roc_auc_score(yv, col)
                 except ValueError:
                     continue
                 auc = max(auc, 1.0 - auc)   # direction-agnostic
-                if auc >= 0.999:
+                if auc >= PROXY_AUC:
                     proxies.append([name, round(float(auc), 4)])
+            proxies.sort(key=lambda t: -t[1])
         out["attacker_host_proxies"] = proxies
+
+        # Per-session and per-host eta^2 (review N6): the fraction of a feature's variance explained
+        # by session identity or host identity. A value near 1 means the feature is ~constant within
+        # a session (a session fingerprint, which a session/time split would leak) or within a host
+        # (a host identity). Reported for all; session-eta^2 >= ETA2_FLAG is treated as leakage.
+        if "session" in df.columns and "host_mac" in df.columns:
+            g_sess = df.loc[tr, "session"].to_numpy()
+            g_host = df.loc[tr, "host_mac"].to_numpy()
+            eta_sess, eta_host = {}, {}
+            for name in feats:
+                col = X.loc[tr, name].to_numpy(dtype=float)
+                eta_sess[name] = round(_eta_squared(col, g_sess), 4)
+                eta_host[name] = round(_eta_squared(col, g_host), 4)
+            out["eta2_session_top"] = sorted(eta_sess.items(), key=lambda t: -t[1])[:8]
+            out["eta2_host_top"] = sorted(eta_host.items(), key=lambda t: -t[1])[:8]
+            out["eta2_session_flags"] = sorted(
+                ([n, v] for n, v in eta_sess.items() if v >= ETA2_FLAG), key=lambda t: -t[1])
 
         te_df = df[te]
         atk_classes = sorted(te_df.loc[te_df["label"] == "attack", "attack_class"].dropna().unique())
@@ -397,17 +435,27 @@ def run(out_path, in_dir=None):
             lines.append(f"- `{c}`: recall {r} (n={pcr.get('test_support', {}).get(c, 0)})")
         lines += [f"- benign specificity: {pcr.get('benign_specificity')}", ""]
 
-    leak_flag = False
-    for name, _imp in fo.get("top15", []):
-        if name in feature_list.get("metadata", []):
-            leak_flag = True
+    # Review N6: the feature/metadata separation is now an invariant asserted directly (features are
+    # an explicit allow-list disjoint from metadata), not inferred from whether a metadata name
+    # happened to land in the top-15. Raises loudly if the contract is ever violated.
+    overlap_ok = True
+    try:
+        common.assert_feature_metadata_disjoint()
+    except ValueError as exc:
+        overlap_ok = False
+        lines += [f"- FEATURE/METADATA OVERLAP: {exc}"]
     proxies = probe.get("attacker_host_proxies") or []
+    eta_flags = probe.get("eta2_session_flags") or []
     lines += ["", f"- split used: {'RANDOM 70/30 fallback (no real train/test yet)' if probe['split_fallback_random'] else 'time-based train/test'}",
               f"- metadata-only F1: {fo and probe['metadata_only']}",
-              f"- any metadata column among top-15 features: {'YES — INVESTIGATE' if leak_flag else 'no'}",
-              f"- top features that alone near-perfectly identify the attacker host "
-              f"(single-feature AUC>=0.999 vs attacker-host): "
-              f"{proxies if proxies else 'none'}", ""]
+              f"- features & metadata disjoint (allow-list): {'yes' if overlap_ok else 'NO — INVESTIGATE'}",
+              f"- features that alone identify the attacker host (single-feature AUC>={PROXY_AUC} "
+              f"vs attacker-host): {proxies if proxies else 'none'}",
+              f"- top per-session eta^2 (feature ~constant within a session = fingerprint): "
+              f"{probe.get('eta2_session_top')}",
+              f"- top per-host eta^2: {probe.get('eta2_host_top')}",
+              f"- session-fingerprint features (eta^2>={ETA2_FLAG}): {eta_flags if eta_flags else 'none'}",
+              ""]
 
     # verdict
     problems = []
@@ -421,10 +469,12 @@ def run(out_path, in_dir=None):
         problems.append("a session manifest no longer verifies")
     if be_issue:
         problems.append("a session has zero reconnects or zero nurse commands")
-    if leak_flag:
-        problems.append("a metadata column leaked into the top features")
+    if not overlap_ok:
+        problems.append("features and metadata overlap")
     if proxies:
-        problems.append("a top feature alone near-perfectly identifies the attacker host")
+        problems.append(f"{len(proxies)} feature(s) identify the attacker host at AUC>={PROXY_AUC}")
+    if eta_flags:
+        problems.append("a feature is a per-session fingerprint (eta^2>=%.2f)" % ETA2_FLAG)
     lines = (["> **Verdict:** " + ("PASS" if not problems else "REVIEW — " + "; ".join(problems)),
               ""] + lines)
 
