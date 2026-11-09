@@ -24,13 +24,26 @@ from .features import extract
 
 
 def _metadata_columns(df):
-    extra = [c for c in ("touches_attacker", "dry_run") if c in df.columns]
+    extra = [c for c in common.METADATA_EXTRAS if c in df.columns]
     return [c for c in common.META_COLUMNS if c in df.columns] + extra
 
 
 def _feature_columns(df):
-    meta = set(_metadata_columns(df))
-    return [c for c in df.columns if c not in meta]
+    """Features are exactly common.FEATURES present in df (review N6: an explicit allow-list, not
+    'everything that isn't metadata'). Refuses drift: a missing allow-listed feature, or any emitted
+    column that is neither a feature nor metadata, is a contract violation."""
+    common.assert_feature_metadata_disjoint()
+    feats = [f for f in common.FEATURES if f in df.columns]
+    missing = [f for f in common.FEATURES if f not in df.columns]
+    if missing:
+        raise SystemExit(f"extractor did not emit allow-listed features: {missing}")
+    known = set(common.FEATURES) | set(_metadata_columns(df))
+    unknown = [c for c in df.columns if c not in known]
+    if unknown:
+        raise SystemExit(
+            f"columns are neither in the feature allow-list nor metadata: {unknown}. "
+            "Add each to common.FEATURES (model input) or META_COLUMNS/METADATA_EXTRAS (metadata).")
+    return feats
 
 
 def discover_sessions(include_dry):

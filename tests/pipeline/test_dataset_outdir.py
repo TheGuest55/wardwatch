@@ -17,8 +17,11 @@ from src.datacheck import check
 
 
 def _tiny_session_df(session):
-    """A minimal valid host-window frame: the metadata columns build() needs plus one feature."""
-    return pd.DataFrame({
+    """A minimal valid host-window frame: every allow-listed feature (common.FEATURES) plus the
+    metadata columns build() needs. Features must match the allow-list exactly now (review N6)."""
+    from src import common
+    cols = {f: [1.0, 2.0] for f in common.FEATURES}
+    cols.update({
         "session": [session, session],
         "window_start_iso": ["2026-11-09T00:00:00+00:00", "2026-11-09T00:00:05+00:00"],
         "window_start_epoch": [1762646400, 1762646405],
@@ -29,8 +32,8 @@ def _tiny_session_df(session):
         "attack_class": ["", "recon_scan"],
         "run_id": ["", "x-recon_scan-01"],
         "is_boundary": [False, False],
-        "foo": [1.0, 2.0],
     })
+    return pd.DataFrame(cols)
 
 
 class TestDatasetOutDir(unittest.TestCase):
@@ -61,8 +64,9 @@ class TestDatasetOutDir(unittest.TestCase):
                 self.assertEqual(list(processed.iterdir()), [])
 
                 fl = json.loads((out_dir / "feature_list.json").read_text())
-                self.assertIn("foo", fl["features"])
+                self.assertIn("pkts_total", fl["features"])
                 self.assertNotIn("session", fl["features"])  # metadata excluded
+                self.assertEqual(fl["features"], list(__import__("src.common", fromlist=["FEATURES"]).FEATURES))
             finally:
                 common.PROCESSED_DIR = orig_proc
                 dataset.extract.extract_session = orig_extract
