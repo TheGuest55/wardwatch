@@ -48,65 +48,85 @@ Captured traffic is written to `data/raw/pcap/`. Two checks need you to confirm 
 hand: `scripts/smoke/s8_host_files.sh` (the pcap is visible on the host) and
 `scripts/smoke/s9_port.sh` (a test page on port 8501 loads in your browser).
 
-## Quickstart for teammates (analysis — no lab needed)
+## Quickstart for teammates (analysis — Docker only, no lab)
 
-For teammates who just want to work with the shared **v2** dataset and the model harness. Windows +
-Docker Desktop, in **PowerShell**. You do **not** need to run the lab, capture traffic, or have `make`.
-One command per step.
+For working with the shared **v2** dataset and the model harness on your own machine, using Docker
+directly — Docker Desktop on **Windows** or **macOS**, Docker Engine on **Linux**.
 
-1. Clone the repo (then `cd` in):
+**You do not need the lab, the attacker container, or any traffic recording for model work.** Do
+**not** run `make up` or `make sessions` — those start the ward and capture, which is unrelated to
+training on the shared dataset. Everything below is just `docker build` and `docker run`.
 
-   ```powershell
-   git clone <repo-url> wardwatch
-   cd wardwatch
-   ```
+The analysis containers run with `--network none` and mount `data/raw` read-only — the same isolation
+as our setup, so the captured evidence can't be modified and nothing reaches the network. The
+`docker` commands are identical in **PowerShell and bash**; the only shell differences are creating
+folders (step 3) and viewing a file (step 7), noted inline.
 
-2. Drop in the shared **v2** dataset. It is shared out-of-band (it is gitignored, so it is *not* in
-   the repo). Create the folders:
+**1. Install Docker** (Docker Desktop on Windows/macOS, Docker Engine on Linux), then confirm:
 
-   ```powershell
-   New-Item -ItemType Directory -Force data\processed\v2, data\raw\sessions | Out-Null
-   ```
+```
+docker --version
+```
 
-   then copy the shared files into place so the layout is exactly:
+**2. Clone the repo:**
 
-   ```
-   data\processed\v2\testbed_windows.parquet
-   data\processed\v2\feature_list.json
-   data\processed\v2\sessions\*.parquet
-   data\raw\sessions\split_v2.json
-   ```
+```
+git clone <repo-url> wardwatch
+cd wardwatch
+```
 
-3. Build the analysis image:
+**3. Put the shared v2 dataset in place.** It is shared out-of-band — `data/` is gitignored, so the
+dataset is **not** in the repo. Create the folders (this is the one place the shells differ):
 
-   ```powershell
-   docker build -t wardwatch-analysis:0.2.0 services/analysis
-   ```
+- PowerShell: `mkdir data\processed\v2, data\raw\sessions`
+- bash: `mkdir -p data/processed/v2 data/raw/sessions`
 
-4. Run the tests (pipeline + harness, inside the image):
+Then copy the shared files in so the layout is exactly:
 
-   ```powershell
-   docker run --rm -v ${PWD}:/work -w /work wardwatch-analysis:0.2.0 python -m unittest discover -s tests/pipeline -p "test_*.py"
-   ```
+```
+data/processed/v2/testbed_windows.parquet
+data/processed/v2/feature_list.json
+data/processed/v2/sessions/*.parquet
+data/raw/sessions/split_v2.json
+```
 
-5. Load the dataset through the harness (quick check it reads):
+**4. Build the analysis image** (exact tag `0.2.0`; needs network for this step only):
 
-   ```powershell
-   docker run --rm -v ${PWD}:/work -w /work wardwatch-analysis:0.2.0 python -c "from src.models.data import load_dataset, Dataset; df, fl = load_dataset(); ds = Dataset(df, fl, scale=False); print(len(df), 'rows,', len(ds.feature_names), 'features; train', len(ds.y('train')), 'test', len(ds.y('test')))"
-   ```
+```
+docker build -t wardwatch-analysis:0.2.0 services/analysis
+```
 
-6. Train a toy model and log a run:
+**5. Run the tests** (pipeline + harness, in the image):
 
-   ```powershell
-   docker run --rm -v ${PWD}:/work -w /work wardwatch-analysis:0.2.0 python examples/quickstart_train.py
-   ```
+```
+docker run --rm --network none -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 python -m unittest discover -s tests/pipeline -p "test_*.py"
+```
 
-   This trains a shallow XGBoost on the train split, prints the fixed binary metrics on the test
-   split, and writes a run record to `data\processed\v2\runs\quickstart.json`. It is a smoke test that
-   your harness + dataset are wired up — **not** a reportable result (untuned, uncalibrated, one seed).
+**6. Load the dataset with the harness** (quick check it reads):
 
-> If PowerShell errors on `${PWD}` in the `-v` flag, use `-v "$($PWD.Path):/work"` instead. The
-> `data\` folder is gitignored, so nothing you place or generate here is committed.
+```
+docker run --rm --network none -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 python -c "from src.models.data import load_dataset, Dataset; df, fl = load_dataset(); ds = Dataset(df, fl, scale=False); print(len(df), 'rows,', len(ds.feature_names), 'features; train', len(ds.y('train')), 'test', len(ds.y('test')))"
+```
+
+Expected: `102152 rows, 51 features; train 53164 test 24840`.
+
+**7. Train a toy model and check the run record:**
+
+```
+docker run --rm --network none -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 python examples/quickstart_train.py
+```
+
+It trains a shallow XGBoost on the train split, prints the fixed binary metrics on the test split,
+and writes the run record to `data/processed/v2/runs/quickstart.json`. View it:
+
+- PowerShell: `Get-Content data\processed\v2\runs\quickstart.json`
+- bash: `cat data/processed/v2/runs/quickstart.json`
+
+This is a smoke test (untuned, one seed) that your harness and dataset are wired up — **not** a
+reportable result.
+
+> If PowerShell errors on `${PWD}` in a `-v` flag, use `"$($PWD.Path):/work"` (and likewise for the
+> `data/raw` mount). `data/` is gitignored, so nothing you place or generate here is committed.
 
 ## Safety
 
