@@ -14,6 +14,10 @@ from . import mqtt
 
 BROADCAST = "ff:ff:ff:ff:ff:ff"
 MQTT_PORT = 1883
+# A transport flow ends on FIN/RST; a later packet on the same 4-tuple is a NEW flow.
+# It also expires after this many idle seconds, so a long-lived flow's age never grows
+# into a host-lifetime / capture-start proxy (review m-new-1, same spirit as B1/M5).
+FLOW_IDLE_TIMEOUT = 120.0
 
 
 def _is_groupcast(mac):
@@ -36,7 +40,7 @@ class _Acc:
         "connack_fail", "clientid_reuse", "wildcard_subs", "topic_depth_max", "is_command_pub",
         "arp_req", "arp_reply", "arp_gratuitous",
         "vital_max_jump", "vital_jump_count", "implausible",
-        "touches_attacker", "ip_counts", "flows",
+        "touches_attacker", "ip_counts", "flows", "flow_fs",
     )
 
     def __init__(self):
@@ -61,6 +65,7 @@ class _Acc:
         self.touches_attacker = False
         self.ip_counts = {}
         self.flows = set()        # distinct transport flow keys active in this (mac, window)
+        self.flow_fs = {}         # flow_key -> its first-seen epoch AS OF this window (reset-aware)
 
 
 def _topic_depth(topic):
@@ -106,7 +111,12 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
     ip_to_mac = {}               # running IP->MAC map (latest), for conflict detection
     conflict_windows = set()      # windows with ANY conflict (for the extract-level count)
     conflict_macs = {}            # win -> set of MACs involved in a conflicting IP claim (review M2)
-    flow_first_seen = {}          # flow_key -> epoch of its first packet (causal; never the future)
+    # Flow lifecycle (review m-new-1): first-seen is reset when a flow is reopened — i.e. after a
+    # FIN/RST closed it, or after >FLOW_IDLE_TIMEOUT idle — so nf_mean_flow_age stays bounded and a
+    # reopened 4-tuple counts as a genuinely new flow.
+    flow_first_seen = {}          # flow_key -> epoch its CURRENT life began (causal; never future)
+    flow_last_seen = {}           # flow_key -> epoch of its most recent packet
+    flow_closed = {}              # flow_key -> True once FIN/RST seen (next packet reopens)
     plaus = PlausibilityTracker()
 
     def get(mac, win):
@@ -127,13 +137,23 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
             or rec.get("ip_src") == attacker_ip or rec.get("ip_dst") == attacker_ip
         )
 
-        # ---- causal transport-flow tracking (review B1) ----
-        # Record each flow's first-seen time and mark it active in this window for both endpoints.
-        # Flow age is computed at finalize as (window_end - first_seen), so it only ever reflects
-        # elapsed time up to the window end — never the flow's whole future lifetime.
+        # ---- causal transport-flow tracking (review B1 + m-new-1) ----
+        # Track each flow's current-life first-seen, resetting it when the flow reopens (a prior
+        # FIN/RST closed it, or it was idle > FLOW_IDLE_TIMEOUT). Age is computed per window from the
+        # first-seen captured on the accumulator, so it only reflects elapsed time up to that
+        # window's end and never a flow's whole (or future) lifetime.
         fkey = _flow_key(rec)
-        if fkey is not None and fkey not in flow_first_seen:
-            flow_first_seen[fkey] = rec["ts"]
+        if fkey is not None:
+            prev_last = flow_last_seen.get(fkey)
+            reopened = (fkey not in flow_first_seen or flow_closed.get(fkey, False)
+                        or (prev_last is not None and rec["ts"] - prev_last > FLOW_IDLE_TIMEOUT))
+            if reopened:
+                flow_first_seen[fkey] = rec["ts"]
+                flow_closed[fkey] = False
+            flow_last_seen[fkey] = rec["ts"]
+            # A FIN/RST closes the flow AFTER this packet (the packet still belongs to it).
+            if rec["l4"] == "tcp" and (rec.get("fin") or rec.get("rst")):
+                flow_closed[fkey] = True
 
         # ---- sender side ----
         a = get(src, win)
@@ -151,6 +171,7 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
             a.touches_attacker = True
         if fkey is not None:
             a.flows.add(fkey)
+            a.flow_fs[fkey] = flow_first_seen[fkey]
 
         # Protocol/flag counts cover every packet the host sends OR receives (./CLAUDE.md
         # granularity; review M4). Sender side also records MQTT message counts and the stateful
@@ -180,6 +201,7 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
                 b.touches_attacker = True
             if fkey is not None:
                 b.flows.add(fkey)
+                b.flow_fs[fkey] = flow_first_seen[fkey]
             # Count received protocol/flags and MQTT messages too (review M4): a subscriber's or
             # eavesdropper's received PUBLISHes, and failed CONNACKs a client receives, are otherwise
             # invisible. Plausibility and client-id ownership stay sender-only (not re-scored here).
@@ -204,7 +226,7 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
             ip_to_mac[claim_ip] = claim_mac
 
     rows = [_finalize(mac, win, a, session, ip_roles,
-                      mac in conflict_macs.get(win, ()), flow_first_seen, attacker_mac)
+                      mac in conflict_macs.get(win, ()), attacker_mac)
             for (mac, win), a in acc.items()]
     return rows, conflict_windows
 
@@ -220,8 +242,11 @@ def _count_proto_flags(a, rec, is_sender):
             a.arp_req += 1
         elif op == 2:
             a.arp_reply += 1
-            if rec.get("arp_psrc") and rec.get("arp_psrc") == rec.get("arp_pdst"):
-                a.arp_gratuitous += 1
+        # Gratuitous ARP = a host announcing its own IP (sender protocol addr == target protocol
+        # addr), in EITHER a request (announcement/probe, op=1) or a reply (op=2). Counting only
+        # replies missed the request form that arpspoof announcements use (review m-new-5).
+        if op in (1, 2) and rec.get("arp_psrc") and rec.get("arp_psrc") == rec.get("arp_pdst"):
+            a.arp_gratuitous += 1
     elif l4 == "tcp":
         a.n_tcp += 1
         if is_sender and rec.get("dport"):
@@ -298,7 +323,7 @@ def _stateful_mqtt(a, rec, active_cid, conn_cid, plaus):
                 a.implausible = 1
 
 
-def _finalize(mac, win, a, session, ip_roles, conflict, flow_first_seen, attacker_mac):
+def _finalize(mac, win, a, session, ip_roles, conflict, attacker_mac):
     sizes = np.array(a.sizes, dtype=float) if a.sizes else np.array([0.0])
     tss = sorted(a.ts)
     iats = np.diff(tss) if len(tss) > 1 else np.array([0.0])
@@ -311,12 +336,14 @@ def _finalize(mac, win, a, session, ip_roles, conflict, flow_first_seen, attacke
     mqtt_total = sum(a.mqtt_counts.values())
     payloads = np.array(a.mqtt_payloads, dtype=float) if a.mqtt_payloads else np.array([0.0])
 
-    # Causal flow features (review B1): computed from packets seen up to this window's end only.
+    # Causal flow features (review B1 + m-new-1): computed from packets seen up to this window's end
+    # only, using the current-life first-seen captured on the accumulator (reset on FIN/RST close or
+    # >FLOW_IDLE_TIMEOUT idle), so a reopened 4-tuple is a new flow and age never grows unbounded.
     win_end = win + common.WINDOW_SECONDS
     nf_active_flows = len(a.flows)
     nf_new_flows = sum(1 for k in a.flows
-                       if common.window_start(flow_first_seen[k]) == win)
-    ages = [max(0.0, win_end - flow_first_seen[k]) for k in a.flows]
+                       if common.window_start(a.flow_fs[k]) == win)
+    ages = [max(0.0, win_end - a.flow_fs[k]) for k in a.flows]
     nf_mean_flow_age = float(np.mean(ages)) if ages else 0.0
 
     return {
@@ -344,9 +371,9 @@ def _finalize(mac, win, a, session, ip_roles, conflict, flow_first_seen, attacke
         "unique_peers": len(a.peers),
         "unique_peer_ips": len(a.peer_ips),
         "unique_contacted_ports": len(a.contacted_ports),
-        # --- features: protocol mix ---
+        # --- features: protocol mix (review m-new-5: frac_udp dropped — the five fractions sum to
+        # 1, so one is exactly collinear; udp share is recoverable from the rest) ---
         "frac_tcp": a.n_tcp / pkts_total if pkts_total else 0.0,
-        "frac_udp": a.n_udp / pkts_total if pkts_total else 0.0,
         "frac_arp": a.n_arp / pkts_total if pkts_total else 0.0,
         "frac_icmp": a.n_icmp / pkts_total if pkts_total else 0.0,
         "frac_other": a.n_other / pkts_total if pkts_total else 0.0,

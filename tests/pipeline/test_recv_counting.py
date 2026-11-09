@@ -46,11 +46,14 @@ class TestRecvCounting(unittest.TestCase):
         t = 8_200_000.0
         pkts = [_publish_to(t + i, SUB, SUB_IP, 40000) for i in range(3)]
         rows, _ = windows.build_rows(iter(pkts), "t", "zz:zz", "9.9.9.9", {})
+        # frac_udp was dropped (m-new-5) as collinear; this traffic is all TCP, so the remaining
+        # fractions still sum to 1. The point of the M4 check stands: received packets are counted,
+        # so the receiver's frac_tcp is ~1 (was ~0 when only sent packets were tallied).
         for r in rows:
             if r["pkts_total"]:
-                s = (r["frac_tcp"] + r["frac_udp"] + r["frac_arp"]
-                     + r["frac_icmp"] + r["frac_other"])
+                s = r["frac_tcp"] + r["frac_arp"] + r["frac_icmp"] + r["frac_other"]
                 self.assertAlmostEqual(s, 1.0, places=6, msg=r["host_mac"])
+                self.assertAlmostEqual(r["frac_tcp"], 1.0, places=6, msg=r["host_mac"])
 
 
 if __name__ == "__main__":
