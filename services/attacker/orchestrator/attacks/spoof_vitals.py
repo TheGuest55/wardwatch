@@ -25,9 +25,10 @@ def _payload(ctx, bed, implausible):
 
 def spoof_vitals(ctx, params):
     duration = int(params.get("duration", 60))
-    # Seeded per-session mode (M6) unless the schedule pins it (used by smoke/tests for determinism).
+    # Deterministic per-session mode alternating by session index (M6 + N1) unless the schedule
+    # pins it via client_id_reuse (the second_client_id override + smoke/tests use that).
     reuse = bool(params["client_id_reuse"]) if "client_id_reuse" in params \
-        else timing.choose_spoof_mode(ctx.rng)
+        else timing.choose_spoof_mode(ctx.session_id)
     user, pw, src = pick_creds(ctx, "device")
     if not user:
         return {"outcome": "fail", "notes": "no device credentials available"}

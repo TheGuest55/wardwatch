@@ -4,6 +4,7 @@ library only so the host can import it without the attacker image's dependencies
 import hashlib
 import math
 import random
+import re
 import time
 
 # Nominal durations (seconds) for classes whose runtime isn't a fixed param, used only for the
@@ -31,11 +32,23 @@ def draw_gaps(rng, schedule, n):
     return [round(rng.uniform(lo, hi), 1) for _ in range(max(0, n))]
 
 
-def choose_spoof_mode(rng):
-    """Seeded choice of the spoof_vitals sub-mode (review M6: don't always run reuse). True = reuse
-    the victim's client id (evicts the real device); False = connect with a second client id (the
-    harder-to-detect variant). Per-session rng, so the mode varies across sessions and is logged."""
-    return rng.random() < 0.5
+def session_index(session_id):
+    """Integer index of a session from its id: the trailing number (``r06`` -> 6), else a stable
+    hash of the id so alternation is always deterministic from the id alone (no external counter)."""
+    m = re.search(r"(\d+)$", session_id or "")
+    if m:
+        return int(m.group(1))
+    return int(hashlib.sha256((session_id or "").encode()).hexdigest(), 16)
+
+
+def choose_spoof_mode(session_id):
+    """Deterministic spoof_vitals sub-mode, alternating by session index (review M6 + N1: the mode
+    must not be a random coin flip that can leave a whole batch on one mode). True = reuse the
+    victim's client id (evicts the real device); False = second client id (harder to detect). Even
+    index -> reuse, odd -> second_client_id, so a batch of consecutive sessions alternates both. A
+    schedule can still pin the mode via params.client_id_reuse (used by the override + smoke/tests).
+    Deterministic from the session id alone."""
+    return session_index(session_id) % 2 == 0
 
 
 def align_to_grid(window=5.0, lead=0.05, clock=time.time, sleep=time.sleep):
