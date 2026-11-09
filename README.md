@@ -26,8 +26,8 @@ training on the shared dataset. Everything below is just `docker build` and `doc
 The analysis containers run with `--network none` and mount `data/raw` **read-only** — the same
 isolation as our setup, so the captured evidence can't be modified and nothing reaches the network.
 The `docker` commands are **identical in PowerShell and bash** (they use `${PWD}` and `$(...)`, which
-both shells expand); the only shell-specific lines are creating folders and viewing a file, called
-out inline.
+both shells expand); the only shell-specific lines are downloading/extracting the dataset (step 2)
+and viewing a file (step 6), called out inline.
 
 **Requirements:** Docker (Desktop on Windows/macOS, Engine on Linux) **and git**. Confirm:
 
@@ -45,19 +45,28 @@ cd wardwatch
 
 ### 2. Get the shared v2 dataset
 
-The dataset is shared out-of-band (`data/` is gitignored, so it is **not** in the repo).
+The dataset is published as a GitHub release (it is gitignored, so it is **not** in the repo).
+Release page: <https://github.com/TheGuest55/wardwatch/releases/tag/v2-dataset>
 
-- **Download it from the shared drive:** <ADD-SHARED-DRIVE-LINK-HERE>
-- The bundle contains **only** `data/processed/v2/` and `data/raw/sessions/split_v2.json` — **never**
-  `runs/` or `mlruns/` (run records), no raw PCAPs, and nothing with credentials. (Whoever builds the
-  bundle uses `scripts/make_dataset_bundle.sh`, which enforces exactly this.)
+Download the bundle into the **repo root** and extract it there. The archive carries the `data/...`
+paths, so extracting at the repo root puts every file in the right place (no `mkdir` needed). From
+the repo root:
 
-Create the folders (this is the one place the shells differ):
+- bash:
 
-- PowerShell: `New-Item -ItemType Directory -Force data\processed\v2, data\raw\sessions`
-- bash: `mkdir -p data/processed/v2 data/raw/sessions`
+  ```bash
+  curl -L -o wardwatch-v2-dataset.zip "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/wardwatch-v2-dataset.zip"
+  unzip -o wardwatch-v2-dataset.zip
+  ```
 
-Unzip the bundle into the repo so the layout is exactly:
+- PowerShell:
+
+  ```powershell
+  Invoke-WebRequest -Uri "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/wardwatch-v2-dataset.zip" -OutFile wardwatch-v2-dataset.zip
+  Expand-Archive -Path wardwatch-v2-dataset.zip -DestinationPath . -Force
+  ```
+
+Afterwards the layout must be exactly:
 
 ```
 data/processed/v2/testbed_windows.parquet
@@ -66,6 +75,13 @@ data/processed/v2/sessions/*.parquet
 data/raw/sessions/split_v2.json
 ```
 
+The bundle (built by `scripts/make_dataset_bundle.sh`) contains **only** these — **never** `runs/` or
+`mlruns/` (run records), no raw PCAPs, and nothing with credentials.
+
+> The download URL above is the release **asset** (`/releases/download/<tag>/<file>`), not the release
+> **page** (`/releases/tag/<tag>`) — fetching the page URL would save HTML, not the zip. If the
+> uploaded asset has a different filename, use that name in both commands.
+>
 > The repo already tracks `data/raw/sessions/split.json` — that is the **v1** split, kept as review
 > evidence. Teammates use **`split_v2.json`** only; don't edit or rely on `split.json`.
 
