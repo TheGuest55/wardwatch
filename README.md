@@ -50,134 +50,63 @@ hand: `scripts/smoke/s8_host_files.sh` (the pcap is visible on the host) and
 
 ## Quickstart for teammates (analysis — no lab needed)
 
-Work with the shared **v2** dataset and the model harness **without running the lab**. Pick your OS
-column and run the one command for your platform at each step. The commands use the pinned analysis
-image; an optional no-Docker (venv) route is at the end.
+For teammates who just want to work with the shared **v2** dataset and the model harness. Windows +
+Docker Desktop, in **PowerShell**. You do **not** need to run the lab, capture traffic, or have `make`.
+One command per step.
 
-- **Windows:** PowerShell + Docker Desktop + Git for Windows. No `make`, no `bash`.
-- **Linux / macOS:** bash + Docker Engine or Docker Desktop. `make` optional.
+1. Clone the repo (then `cd` in):
 
-### 1. Clone
+   ```powershell
+   git clone <repo-url> wardwatch
+   cd wardwatch
+   ```
 
-Same on every OS:
+2. Drop in the shared **v2** dataset. It is shared out-of-band (it is gitignored, so it is *not* in
+   the repo). Create the folders:
 
-```bash
-git clone <repo-url> wardwatch
-cd wardwatch
-```
+   ```powershell
+   New-Item -ItemType Directory -Force data\processed\v2, data\raw\sessions | Out-Null
+   ```
 
-### 2. Get the shared v2 dataset
+   then copy the shared files into place so the layout is exactly:
 
-It is shared out-of-band — `data/` is gitignored, so the dataset is **not** in the repo. Create the
-folders, then copy the shared files into them.
+   ```
+   data\processed\v2\testbed_windows.parquet
+   data\processed\v2\feature_list.json
+   data\processed\v2\sessions\*.parquet
+   data\raw\sessions\split_v2.json
+   ```
 
-| Windows (PowerShell) | Linux / macOS (bash) |
-|---|---|
-| `New-Item -ItemType Directory -Force data\processed\v2, data\raw\sessions \| Out-Null` | `mkdir -p data/processed/v2 data/raw/sessions` |
+3. Build the analysis image:
 
-Copy the shared files so the layout is exactly:
+   ```powershell
+   docker build -t wardwatch-analysis:0.2.0 services/analysis
+   ```
 
-```
-data/processed/v2/testbed_windows.parquet
-data/processed/v2/feature_list.json
-data/processed/v2/sessions/*.parquet
-data/raw/sessions/split_v2.json
-```
+4. Run the tests (pipeline + harness, inside the image):
 
-### 3. Build the analysis image
+   ```powershell
+   docker run --rm -v ${PWD}:/work -w /work wardwatch-analysis:0.2.0 python -m unittest discover -s tests/pipeline -p "test_*.py"
+   ```
 
-Same on every OS:
+5. Load the dataset through the harness (quick check it reads):
 
-```bash
-docker build -t wardwatch-analysis:0.2.0 services/analysis
-```
+   ```powershell
+   docker run --rm -v ${PWD}:/work -w /work wardwatch-analysis:0.2.0 python -c "from src.models.data import load_dataset, Dataset; df, fl = load_dataset(); ds = Dataset(df, fl, scale=False); print(len(df), 'rows,', len(ds.feature_names), 'features; train', len(ds.y('train')), 'test', len(ds.y('test')))"
+   ```
 
-### 4. Run the tests (pipeline + harness, inside the image)
+6. Train a toy model and log a run:
 
-**Windows (PowerShell)** — via the wrapper (allow `.ps1` for this session first), or the plain command:
+   ```powershell
+   docker run --rm -v ${PWD}:/work -w /work wardwatch-analysis:0.2.0 python examples/quickstart_train.py
+   ```
 
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass -Force ; .\scripts\analysis.ps1 test
-# or, no wrapper:
-docker run --rm -v ${PWD}:/work -w /work wardwatch-analysis:0.2.0 python -m unittest discover -s tests/pipeline -p "test_*.py"
-```
+   This trains a shallow XGBoost on the train split, prints the fixed binary metrics on the test
+   split, and writes a run record to `data\processed\v2\runs\quickstart.json`. It is a smoke test that
+   your harness + dataset are wired up — **not** a reportable result (untuned, uncalibrated, one seed).
 
-**Linux / macOS (bash)** — via the wrapper, or the plain command:
-
-```bash
-bash scripts/analysis.sh test
-# or, no wrapper:
-docker run --rm -v "$PWD":/work -w /work wardwatch-analysis:0.2.0 python -m unittest discover -s tests/pipeline -p "test_*.py"
-```
-
-### 5. Load the dataset with the harness (quick check it reads)
-
-**Windows (PowerShell):**
-
-```powershell
-docker run --rm -v ${PWD}:/work -w /work wardwatch-analysis:0.2.0 python -c "from src.models.data import load_dataset, Dataset; df, fl = load_dataset(); ds = Dataset(df, fl, scale=False); print(len(df), 'rows,', len(ds.feature_names), 'features; train', len(ds.y('train')), 'test', len(ds.y('test')))"
-```
-
-**Linux / macOS (bash):**
-
-```bash
-docker run --rm -v "$PWD":/work -w /work wardwatch-analysis:0.2.0 python -c "from src.models.data import load_dataset, Dataset; df, fl = load_dataset(); ds = Dataset(df, fl, scale=False); print(len(df), 'rows,', len(ds.feature_names), 'features; train', len(ds.y('train')), 'test', len(ds.y('test')))"
-```
-
-Expected: `102152 rows, 51 features; train 53164 test 24840`.
-
-### 6. Train a toy model and check the run record
-
-Train + log (same image, one command per OS):
-
-```powershell
-# Windows (PowerShell)
-docker run --rm -v ${PWD}:/work -w /work wardwatch-analysis:0.2.0 python examples/quickstart_train.py
-```
-
-```bash
-# Linux / macOS (bash)
-docker run --rm -v "$PWD":/work -w /work wardwatch-analysis:0.2.0 python examples/quickstart_train.py
-```
-
-It trains a shallow XGBoost on the train split, prints the fixed binary metrics on the test split,
-and writes the run record to `data/processed/v2/runs/quickstart.json`. Check it:
-
-| Windows (PowerShell) | Linux / macOS (bash) |
-|---|---|
-| `Get-Content data\processed\v2\runs\quickstart.json` | `cat data/processed/v2/runs/quickstart.json` |
-
-This is a smoke test (untuned, one seed) that your harness + dataset are wired up — **not** a
-reportable result.
-
-### Notes
-
-- `scripts/analysis.ps1` mirrors `scripts/analysis.sh` (same `docker run` flags; repo mounted at
-  `/work`, `data/raw` read-only): `features <session> | dataset | datacheck | test | shell`. Override
-  the image with `$env:ANALYSIS_IMAGE` (PowerShell) or `ANALYSIS_IMAGE=…` (bash).
-- If PowerShell errors on `${PWD}` in a `-v` flag, use `-v "$($PWD.Path):/work"`.
-- `data/` is gitignored, so nothing you place or generate here is committed.
-
-### Optional: no-Docker route (venv)
-
-For running the harness and training models without Docker. Needs **Python 3.11** (the image uses
-3.11.9); it installs the pinned stack (CPU-only torch) from `requirements-models.txt`. This covers
-steps 5–6 (load the dataset, train a model); feature extraction from pcaps and the full test suite
-also need scapy and stay in Docker.
-
-**Windows (PowerShell):**
-
-```powershell
-py -3.11 -m venv .venv ; .\.venv\Scripts\Activate.ps1 ; pip install -r requirements-models.txt
-$env:PYTHONPATH="." ; python examples/quickstart_train.py
-```
-
-**Linux / macOS (bash):**
-
-```bash
-python3.11 -m venv .venv && . .venv/bin/activate && pip install -r requirements-models.txt
-PYTHONPATH=. python examples/quickstart_train.py
-```
+> If PowerShell errors on `${PWD}` in the `-v` flag, use `-v "$($PWD.Path):/work"` instead. The
+> `data\` folder is gitignored, so nothing you place or generate here is committed.
 
 ## Safety
 
