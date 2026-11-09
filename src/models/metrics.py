@@ -11,8 +11,13 @@ import numpy as np
 
 
 def fpr_at_recall(y_true, y_score, target_recall=0.90):
-    """Lowest false-positive rate achievable while recall >= target_recall, by sweeping the score
-    threshold. Returns (fpr, threshold, achieved_recall) or (nan, nan, nan) if unreachable."""
+    """Lowest false-positive rate achievable while recall >= target_recall.
+
+    Review N3: evaluated at the UNIQUE score thresholds only. A threshold t predicts positive every
+    row with score >= t, so all rows that TIE at t count together — taking the last index of each
+    tied run. Scoring per-sorted-row instead (the previous bug) could place the threshold in the
+    middle of a tied block and under-count the false positives at that threshold. Returns
+    (fpr, threshold, achieved_recall) or (nan, nan, nan) if unreachable."""
     y_true = np.asarray(y_true).astype(int)
     y_score = np.asarray(y_score, dtype=float)
     P = int((y_true == 1).sum())
@@ -23,13 +28,19 @@ def fpr_at_recall(y_true, y_score, target_recall=0.90):
     ys, sc = y_true[order], y_score[order]
     tp = np.cumsum(ys == 1)
     fp = np.cumsum(ys == 0)
-    recall = tp / P
-    fpr = fp / N
+    # Last index of each unique score (descending): everything up to here has score >= that score.
+    last = np.flatnonzero(np.diff(sc) != 0)
+    last = np.append(last, len(sc) - 1)
+    recall = tp[last] / P
+    fpr = fp[last] / N
+    thr = sc[last]
     ok = recall >= target_recall
     if not ok.any():
         return float("nan"), float("nan"), float("nan")
-    i = int(np.argmax(ok))          # first threshold meeting the recall target
-    return float(fpr[i]), float(sc[i]), float(recall[i])
+    # recall is non-decreasing as the threshold drops, so the first qualifying unique threshold is
+    # the highest one — and thus the lowest fpr — that still meets the recall target.
+    i = int(np.argmax(ok))
+    return float(fpr[i]), float(thr[i]), float(recall[i])
 
 
 def binary_metrics(y_true, y_score=None, y_pred=None, threshold=0.5, recall_targets=(0.90, 0.95)):
@@ -56,8 +67,9 @@ def binary_metrics(y_true, y_score=None, y_pred=None, threshold=0.5, recall_targ
 
 
 def per_window_latency_ms(score_fn, X, repeats=3):
-    """Median per-window scoring latency in ms: time score_fn(X) over `repeats` passes and divide by
-    the number of windows. score_fn should score the whole batch the way the deployed path would."""
+    """Batch THROUGHPUT proxy: time score_fn(X) over `repeats` passes and divide by the number of
+    windows. This is amortised cost, not single-window latency — use single_window_latency_ms for
+    the deployed-path budget."""
     n = len(X)
     if n == 0:
         return float("nan")
@@ -67,3 +79,28 @@ def per_window_latency_ms(score_fn, X, repeats=3):
         score_fn(X)
         times.append((time.perf_counter() - t0) / n * 1000.0)
     return float(np.median(times))
+
+
+def single_window_latency_ms(score_one, inputs, n_calls=200, warmup=20):
+    """Deployed single-window latency (review N4): the real-time path scores ONE window at a time,
+    so measure exactly that. `score_one(x)` takes one window's input and does the full per-window
+    work — feature-row assembly AND model scoring — the way the live pipeline would. We cycle through
+    `inputs`, run `warmup` untimed calls (JIT/caches/allocators settle), then time at least `n_calls`
+    individual calls and report the median and p95 in ms (p95 is the tail the <50 ms budget must
+    respect). Returns {median_ms, p95_ms, n, warmup}."""
+    inputs = list(inputs)
+    if not inputs:
+        return {"median_ms": float("nan"), "p95_ms": float("nan"), "n": 0, "warmup": warmup}
+    m = len(inputs)
+    n_calls = max(int(n_calls), 200)          # the spec floor: >= 200 timed calls
+    for i in range(max(0, int(warmup))):
+        score_one(inputs[i % m])
+    times = np.empty(n_calls, dtype=float)
+    for i in range(n_calls):
+        x = inputs[i % m]
+        t0 = time.perf_counter()
+        score_one(x)
+        times[i] = (time.perf_counter() - t0) * 1000.0
+    return {"median_ms": float(np.median(times)),
+            "p95_ms": float(np.percentile(times, 95)),
+            "n": int(n_calls), "warmup": int(max(0, warmup))}

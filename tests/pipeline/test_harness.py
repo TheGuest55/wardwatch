@@ -1,6 +1,11 @@
 """Pipeline tests for the model harness: split-respecting loader with train-only fit discipline,
 and metrics that match sklearn on a toy set."""
+import hashlib
+import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -92,6 +97,87 @@ class TestTracking(unittest.TestCase):
             self.assertIn(k, rec)
         out = tracking.log_run(rec, use_mlflow=True)   # mlflow may be absent; must not raise
         self.assertEqual(out["model"], "xgboost")
+
+    def test_fpr_at_recall_handles_tied_scores(self):
+        # Review N3: two of the three negatives tie with the positive at 0.5. Reaching recall 1.0
+        # needs threshold 0.5, which predicts BOTH tied negatives positive -> fpr = 2/3, not 0.
+        y = np.array([1, 1, 0, 0, 0])
+        score = np.array([0.9, 0.5, 0.5, 0.5, 0.1])
+        fpr, thr, rec = mmetrics.fpr_at_recall(y, score, target_recall=1.0)
+        self.assertEqual(rec, 1.0)
+        self.assertEqual(thr, 0.5)
+        self.assertAlmostEqual(fpr, 2.0 / 3.0, places=10)
+
+    def test_single_window_latency_shape(self):
+        # Review N4: >=200 timed single-window calls after warm-up, median and p95 reported.
+        calls = {"n": 0}
+
+        def score_one(x):
+            calls["n"] += 1
+            return float(np.asarray(x, dtype=float).sum())
+
+        inputs = [np.arange(51, dtype=float) for _ in range(8)]  # ~ one feature row each
+        res = mmetrics.single_window_latency_ms(score_one, inputs, n_calls=10, warmup=20)
+        self.assertEqual(res["n"], 200)                 # floored at 200 even if asked fewer
+        self.assertEqual(calls["n"], 200 + 20)          # warm-up calls happened too
+        self.assertGreaterEqual(res["p95_ms"], res["median_ms"])
+        self.assertTrue(np.isfinite(res["median_ms"]))
+
+
+class TestLoaderPaths(unittest.TestCase):
+    def _write(self, d, features):
+        d = Path(d)
+        df = _toy_df()
+        df.to_parquet(d / "testbed_windows.parquet", index=False)
+        (d / "feature_list.json").write_text(json.dumps({"features": features}))
+        return str(d / "testbed_windows.parquet"), str(d / "feature_list.json")
+
+    def test_accepts_string_paths(self):
+        with tempfile.TemporaryDirectory() as d:
+            dp, fp = self._write(d, ["f1", "f2"])
+            df, fl = mdata.load_dataset(dp, fp)          # strings, not Path (m-new-3)
+            self.assertEqual(fl["features"], ["f1", "f2"])
+
+    def test_rejects_identifier_columns(self):
+        with tempfile.TemporaryDirectory() as d:
+            dp, fp = self._write(d, ["f1", "host_ip"])   # host_ip is metadata
+            with self.assertRaises(ValueError):
+                mdata.load_dataset(dp, fp)
+
+    def test_default_is_v2(self):
+        self.assertEqual(mdata.V2_DIR.name, "v2")
+        self.assertEqual(mdata.V2_DIR.parent.name, "processed")
+
+
+class TestProvenance(unittest.TestCase):
+    def test_record_has_autofilled_provenance(self):
+        with tempfile.TemporaryDirectory() as d:
+            split = Path(d) / "split_v2.json"
+            split.write_text('{"train":["r01"],"val":["r04"],"test":["r05"]}')
+            dataset = Path(d) / "testbed_windows.parquet"
+            dataset.write_bytes(b"not-a-real-parquet-but-hashable")
+            rec = tracking.build_run_record("A", "xgboost", "classifier",
+                                            seed=60077, split_path=str(split),
+                                            dataset_path=str(dataset))
+            prov = rec["provenance"]
+            for k in ("seed", "split_file", "split_sha256", "dataset_sha256",
+                      "git_commit", "git_dirty", "image_digest"):
+                self.assertIn(k, prov)
+            self.assertEqual(prov["seed"], 60077)
+            self.assertEqual(prov["split_sha256"], hashlib.sha256(split.read_bytes()).hexdigest())
+            self.assertEqual(prov["dataset_sha256"],
+                             hashlib.sha256(dataset.read_bytes()).hexdigest())
+            self.assertIn(prov["git_dirty"], (True, False, None))
+
+    def test_json_written_without_mlflow(self):
+        with tempfile.TemporaryDirectory() as d:
+            rec = tracking.build_run_record("B", "autoencoder", "anomaly", seed=1)
+            out = Path(d) / "run.json"
+            tracking.log_run(rec, json_path=str(out), use_mlflow=False)
+            self.assertTrue(out.exists())
+            loaded = json.loads(out.read_text())
+            self.assertEqual(loaded["model"], "autoencoder")
+            self.assertIn("provenance", loaded)
 
 
 if __name__ == "__main__":

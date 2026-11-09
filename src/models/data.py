@@ -7,6 +7,7 @@ applied to val/test — fitting on val/test would leak. Cross-dataset runs (Expe
 testbed-only features via include_testbed_only=False.
 """
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -15,12 +16,24 @@ from .. import common
 
 SPLITS = ("train", "val", "test")
 
+# v2 is the primary corpus (./CLAUDE.md / review N1): every model, experiment and report number uses
+# it. load_dataset defaults here unless explicit paths are given.
+V2_DIR = common.PROCESSED_DIR / "v2"
+
 
 def load_dataset(data_path=None, feature_list_path=None):
-    data_path = data_path or (common.PROCESSED_DIR / "testbed_windows.parquet")
-    fl_path = feature_list_path or (common.PROCESSED_DIR / "feature_list.json")
+    """Load (df, feature_list). Paths may be str or Path (review m-new-3); when omitted they default
+    to the v2 corpus, never v1. Rejects a feature_list that lists any identifier/metadata column, so
+    an identifier can never reach a model through a stale or hand-edited feature_list."""
+    data_path = Path(data_path) if data_path else V2_DIR / "testbed_windows.parquet"
+    fl_path = Path(feature_list_path) if feature_list_path else V2_DIR / "feature_list.json"
     df = pd.read_parquet(data_path)
     feature_list = json.loads(fl_path.read_text())
+
+    identifiers = set(common.META_COLUMNS) | set(common.METADATA_EXTRAS)
+    bad = [c for c in feature_list.get("features", []) if c in identifiers]
+    if bad:
+        raise ValueError(f"feature_list lists identifier/metadata columns as features: {bad}")
     return df, feature_list
 
 
