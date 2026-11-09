@@ -29,6 +29,17 @@ RUN if [ "$WITH_NFSTREAM" = "1" ]; then \
       echo "skipping nfstream (WITH_NFSTREAM=0)"; \
     fi
 
+# Model stack (review N5): pinned versions for the three families + tracking + explanations. torch is
+# the CPU-ONLY wheel from download.pytorch.org (allowlist-verified) — never the default PyPI wheel,
+# which drags in multi-GB CUDA/GPU packages. mlflow/xgboost/shap come from PyPI.
+RUN pip install --no-cache-dir \
+      mlflow==2.16.2 \
+      xgboost==2.1.1 \
+      shap==0.46.0
+RUN pip install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cpu \
+      torch==2.4.1
+
 WORKDIR /work
 ENV PYTHONPATH=/work
 CMD ["python", "-c", "print('wardwatch-analysis image ready')"]
