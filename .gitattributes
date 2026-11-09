@@ -1,0 +1,14 @@
+# Normalize all text files to LF in the repo; let Git detect text vs binary.
+* text=auto eol=lf
+
+# Binary file types — never normalize, never diff as text.
+*.pcap   binary
+*.pcapng binary
+*.parquet binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.pdf    binary
+*.docx   binary
+*.zip    binary
+*.whl    binary
