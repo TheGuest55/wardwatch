@@ -92,19 +92,26 @@ def build(split_path, force, include_dry, out_dir=None):
     if not sessions:
         raise SystemExit("no sessions found to build from")
 
-    parts, report = [], {"sessions": {}, "boundary_dropped": 0}
+    parts, report = [], {"sessions": {}, "boundary_dropped": 0, "victim_dropped": 0}
     for s in sessions:
         if s not in sess_split:
             print(f"[WARN] session {s} not in split file; skipping", flush=True)
             continue
         df = session_df(s, force, out_dir)
         n_boundary = int(df["is_boundary"].sum())
-        kept = df[~df["is_boundary"]].copy()
+        # Victim rows (review N2) are excluded from the model dataset exactly like boundary rows —
+        # ambiguous training signal — but counted per class here and in datacheck.
+        victim_mask = df["label"] == "victim"
+        n_victim = int(victim_mask.sum())
+        victim_by_class = df.loc[victim_mask, "attack_class"].value_counts().to_dict()
+        kept = df[(~df["is_boundary"]) & (~victim_mask)].copy()
         kept["split"] = sess_split[s]
         parts.append(kept)
         report["boundary_dropped"] += n_boundary
+        report["victim_dropped"] += n_victim
         report["sessions"][s] = {
             "split": sess_split[s], "rows_kept": len(kept), "boundary_dropped": n_boundary,
+            "victim_dropped": n_victim, "victim_by_class": victim_by_class,
             "label_counts": kept["label"].value_counts().to_dict(),
         }
 

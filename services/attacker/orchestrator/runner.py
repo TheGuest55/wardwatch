@@ -59,5 +59,8 @@ class Runner:
                 "outcome": outcome,
                 "notes": result.get("notes", ""),
                 **({"creds_source": result["creds_source"]} if "creds_source" in result else {}),
+                # Structured victim devices (review N2): {ip, mac} list for spoof_vitals/pump_cmd, so
+                # future runs name the victim in ground truth instead of only in the free-text notes.
+                **({"victims": result["victims"]} if "victims" in result else {}),
             })
             print(f"[{run_id}] {cls} {outcome} in {util.monotonic() - t0:.1f}s", flush=True)

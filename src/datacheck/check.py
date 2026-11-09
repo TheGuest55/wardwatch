@@ -405,13 +405,27 @@ def run(out_path, in_dir=None):
               f"- infinite feature cells: {n_inf}",
               f"- columns with NaN: {na_cols if na_cols else 'none'}", ""]
 
-    # boundary windows (from per-session parquets, which still carry is_boundary)
+    # boundary + victim windows (from per-session parquets, which still carry both; the model
+    # dataset drops them). Review N2: victim rows are counted per class here.
     boundary = {}
+    victim_total = Counter()
+    victim_by_session = {}
     for s in sessions:
         pssn = per_session_parquet(s, in_dir)
         if pssn is not None:
             boundary[s] = int(pssn["is_boundary"].sum())
+            vrows = pssn[pssn["label"] == "victim"]
+            if len(vrows):
+                vc = vrows["attack_class"].value_counts().to_dict()
+                victim_by_session[s] = vc
+                victim_total.update(vc)
     lines += ["## Boundary windows dropped (per session)", "", f"- {boundary}", ""]
+    lines += ["## Victim windows (excluded from training/metrics like boundary; review N2)", "",
+              "Victim = a stolen-credential victim device's own, still-normal traffic during its "
+              "impersonation (spoof_vitals monitor; pump_cmd pumps). eavesdrop has no victim device "
+              "(passive read). Counted here, never trained on.", "",
+              f"- per class (all sessions): {dict(victim_total) if victim_total else 'none'}",
+              f"- per session: {victim_by_session if victim_by_session else 'none'}", ""]
 
     # leakage probe
     lines += ["## Leakage probe", "",

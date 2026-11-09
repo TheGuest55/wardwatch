@@ -29,14 +29,14 @@ class TestAlignToGrid(unittest.TestCase):
     def test_aligned_onset_window_is_attack(self):
         # start_utc AT the boundary 1000 => window [1000,1005) is fully inside [1000,1060].
         intervals = [{"class": "eavesdrop", "run_id": "r", "start": 1000.0, "end": 1060.0}]
-        label, cls, rid, boundary = label_window(1000, True, intervals)
+        label, cls, rid, boundary = label_window(1000, True, None, intervals, {})
         self.assertEqual(label, "attack")
         self.assertFalse(boundary)
 
     def test_misaligned_onset_window_is_dropped(self):
         # The old behaviour: start_utc mid-window (1000.2) makes [1000,1005) straddle -> dropped.
         intervals = [{"class": "eavesdrop", "run_id": "r", "start": 1000.2, "end": 1060.2}]
-        label, cls, rid, boundary = label_window(1000, True, intervals)
+        label, cls, rid, boundary = label_window(1000, True, None, intervals, {})
         self.assertTrue(boundary)
         self.assertEqual(label, "boundary")
 

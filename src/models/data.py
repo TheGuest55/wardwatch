@@ -61,7 +61,11 @@ class Dataset:
     """Holds per-split feature matrices, binary targets, and row metadata. A StandardScaler, when
     requested, is fit on train only."""
 
+    EXCLUDED_LABELS = ("victim", "boundary")   # excluded from training and binary metrics (N2, M7)
+
     def __init__(self, df, feature_list, include_testbed_only=True, scale=True):
+        if "label" in df.columns:
+            df = df[~df["label"].isin(self.EXCLUDED_LABELS)].reset_index(drop=True)
         self.feature_names = feature_columns(feature_list, df, include_testbed_only)
         self._mask = {s: (df["split"] == s).to_numpy() for s in SPLITS}
         X = _matrix(df, self.feature_names)

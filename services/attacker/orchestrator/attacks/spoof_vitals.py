@@ -50,7 +50,12 @@ def spoof_vitals(ctx, params):
         c.disconnect()
     except Exception as exc:
         return {"outcome": "fail", "notes": str(exc), "creds_source": src}
+    # Structured victim (review N2): the impersonated monitor. Same in both spoof modes. MAC is not
+    # known to the attacker in-band (recorded null); labelling keys on the IP, and the device's MAC
+    # is recoverable from its own traffic at extraction time.
+    victims = [{"ip": ctx.user_ip.get(user), "mac": None, "role": "monitor", "bed": bed}]
     return {"targets": [ctx.broker_ip], "creds_source": src,
+            "victims": victims,
             "params_out": {"client_id_reuse": reuse,
                            "spoof_mode": "reuse" if reuse else "second_client_id"},
             "notes": f"published {sent} spoofed vitals to bed{bed} as {user} ({src}), "

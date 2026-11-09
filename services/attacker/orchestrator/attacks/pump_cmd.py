@@ -44,7 +44,13 @@ def pump_cmd(ctx, params):
     except Exception as exc:
         return {"outcome": "fail", "notes": str(exc), "creds_source": src}
     n_dang = sum(1 for x in commands if not x["plausible"])
+    # Structured victims (review N2): the commanded pumps. MAC null (not known in-band); labelling
+    # keys on the IP. pump IP = subnet prefix + (10*bed + 2).
+    prefix = ctx.cfg["network"]["subnet"].rsplit(".", 1)[0] + "."
+    victims = [{"ip": f"{prefix}{10 * b + 2}", "mac": None, "role": "pump", "bed": b}
+               for b in sorted({cmd["bed"] for cmd in commands})]
     return {"targets": [ctx.broker_ip], "creds_source": src,
+            "victims": victims,
             "params_out": {"commands": commands},
             "notes": f"sent {len(commands)} unauthorised pump commands as {user} ({src}); "
                      f"{len(commands) - n_dang} plausible-rate, {n_dang} dangerous"}
