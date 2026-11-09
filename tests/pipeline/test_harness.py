@@ -169,6 +169,44 @@ class TestProvenance(unittest.TestCase):
                              hashlib.sha256(dataset.read_bytes()).hexdigest())
             self.assertIn(prov["git_dirty"], (True, False, None))
 
+    def test_report_record_refuses_null_provenance(self):
+        # for_report=True with missing provenance (no seed/split/dataset, git env unset) must raise
+        # before any write.
+        rec = tracking.build_run_record("A", "xgboost", "classifier", seed=None, for_report=True)
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "run.json"
+            with self.assertRaises(ValueError):
+                tracking.log_run(rec, json_path=str(out), use_mlflow=False)
+            self.assertFalse(out.exists())   # nothing written
+
+    def test_report_record_writes_when_provenance_complete(self):
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            split = Path(d) / "split_v2.json"; split.write_text('{"train":["r01"]}')
+            dataset = Path(d) / "ds.parquet"; dataset.write_bytes(b"x")
+            os.environ["WARDWATCH_GIT_COMMIT"] = "deadbeef"
+            os.environ["WARDWATCH_GIT_DIRTY"] = ""            # empty porcelain => clean (not null)
+            os.environ["WARDWATCH_IMAGE_DIGEST"] = "sha256:abc"
+            try:
+                rec = tracking.build_run_record(
+                    "A", "xgboost", "classifier", seed=0, for_report=True,
+                    split_path=str(split), dataset_path=str(dataset))
+                self.assertEqual(rec["provenance"]["git_dirty"], False)   # empty => clean, non-null
+                out = Path(d) / "run.json"
+                tracking.log_run(rec, json_path=str(out), use_mlflow=False)   # must not raise
+                self.assertTrue(out.exists())
+            finally:
+                for k in ("WARDWATCH_GIT_COMMIT", "WARDWATCH_GIT_DIRTY", "WARDWATCH_IMAGE_DIGEST"):
+                    os.environ.pop(k, None)
+
+    def test_dirty_env_porcelain_nonempty_is_dirty(self):
+        import os
+        os.environ["WARDWATCH_GIT_DIRTY"] = " M README.md"
+        try:
+            self.assertTrue(tracking.run_provenance()["git_dirty"])
+        finally:
+            os.environ.pop("WARDWATCH_GIT_DIRTY", None)
+
     def test_json_written_without_mlflow(self):
         with tempfile.TemporaryDirectory() as d:
             rec = tracking.build_run_record("B", "autoencoder", "anomaly", seed=1)
