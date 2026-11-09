@@ -1,6 +1,6 @@
 """Data-quality checks + leakage probe over data/processed/testbed_windows.parquet.
 
-    python -m src.datacheck.check [--out docs/data-report.md]
+    python -m src.datacheck.check [--in-dir data/processed] [--out docs/data-report.md]
 
 Every number here is computed from the dataset and the captured sessions, and copied into the
 report. Checks (./CLAUDE.md Task 5): rows per class x session, normal/attack ratio, boundary
@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 from collections import Counter
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -41,6 +42,9 @@ def manifest_verify(session):
         listed = manifest
     mismatches, missing = [], []
     for rel, expected in sorted(listed.items()):
+        # merge_session.py writes each entry as {"sha256": ..., "bytes": ...}; older/synthetic
+        # manifests used a bare hex string. Accept both.
+        exp_sha = expected.get("sha256") if isinstance(expected, dict) else expected
         fp = sdir / rel
         if not fp.exists():
             missing.append(rel)
@@ -49,7 +53,7 @@ def manifest_verify(session):
         with open(fp, "rb") as f:
             for chunk in iter(lambda: f.read(1 << 20), b""):
                 h.update(chunk)
-        if h.hexdigest() != expected:
+        if h.hexdigest() != exp_sha:
             mismatches.append(rel)
     return {"ok": not (mismatches or missing), "n_files": len(listed),
             "mismatches": mismatches, "missing": missing, "unlisted": []}
@@ -91,8 +95,9 @@ def benign_event_counts(session):
             "nurse_command": counts.get("nurse_command", 0)}
 
 
-def per_session_parquet(session):
-    p = common.PROCESSED_DIR / "sessions" / f"{session}.parquet"
+def per_session_parquet(session, in_dir=None):
+    base = Path(in_dir) if in_dir is not None else common.PROCESSED_DIR
+    p = base / "sessions" / f"{session}.parquet"
     return pd.read_parquet(p) if p.exists() else None
 
 
@@ -232,11 +237,12 @@ def leakage_probe(df, feature_list):
 
 # ----------------------------- report -----------------------------
 
-def run(out_path):
-    data_path = common.PROCESSED_DIR / "testbed_windows.parquet"
-    fl_path = common.PROCESSED_DIR / "feature_list.json"
+def run(out_path, in_dir=None):
+    in_dir = Path(in_dir) if in_dir is not None else common.PROCESSED_DIR
+    data_path = in_dir / "testbed_windows.parquet"
+    fl_path = in_dir / "feature_list.json"
     if not data_path.exists() or not fl_path.exists():
-        raise SystemExit("run `make dataset` first (missing testbed_windows.parquet / feature_list.json)")
+        raise SystemExit(f"run `make dataset` first (missing {data_path} / {fl_path})")
     df = pd.read_parquet(data_path)
     feature_list = json.loads(fl_path.read_text())
     sessions = sorted(df["session"].unique())
@@ -364,7 +370,7 @@ def run(out_path):
     # boundary windows (from per-session parquets, which still carry is_boundary)
     boundary = {}
     for s in sessions:
-        pssn = per_session_parquet(s)
+        pssn = per_session_parquet(s, in_dir)
         if pssn is not None:
             boundary[s] = int(pssn["is_boundary"].sum())
     lines += ["## Boundary windows dropped (per session)", "", f"- {boundary}", ""]
@@ -432,8 +438,11 @@ def run(out_path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="docs/data-report.md")
+    ap.add_argument("--in-dir", default=str(common.PROCESSED_DIR),
+                    help="directory holding testbed_windows.parquet, feature_list.json and the "
+                         "per-session parquet cache to check (default data/processed)")
     args = ap.parse_args()
-    run(args.out)
+    run(args.out, args.in_dir)
 
 
 if __name__ == "__main__":

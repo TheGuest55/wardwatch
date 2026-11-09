@@ -30,11 +30,18 @@ sessions: gen
 features:
 	bash scripts/analysis.sh features "$(SESSION)"
 
+# Build a labelled dataset. Defaults target data/processed/ (v1, back-compat). For a separate
+# corpus pass a split file + output dir, e.g.:
+#   make dataset SPLIT=data/raw/sessions/split_v2.json OUT=data/processed/v2 FORCE=1
 dataset:
-	bash scripts/analysis.sh dataset
+	bash scripts/analysis.sh dataset \
+	  $(if $(SPLIT),--split $(SPLIT),) $(if $(OUT),--out-dir $(OUT),) $(if $(FORCE),--force,)
 
+# Data-quality + leakage report. Point at a corpus's output dir and a report path, e.g.:
+#   make datacheck IN=data/processed/v2 REPORT=docs/data-report-v2.md
 datacheck:
-	bash scripts/analysis.sh datacheck
+	bash scripts/analysis.sh datacheck \
+	  $(if $(IN),--in-dir $(IN),) $(if $(REPORT),--out $(REPORT),)
 
 # Regression tests: generation (host, stdlib) + pipeline (analysis image). make test [TIER=generation]
 test:

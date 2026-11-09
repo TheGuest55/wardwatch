@@ -1,6 +1,7 @@
 """Build the single labelled dataset from captured sessions.
 
-    python -m src.dataset [--split data/raw/sessions/split.json] [--force] [--include-dry]
+    python -m src.dataset [--split data/raw/sessions/split.json]
+                          [--out-dir data/processed] [--force] [--include-dry]
 
 Extracts each session (reusing an existing per-session parquet unless --force), drops boundary
 windows (counted in the report), stamps the train/val/test `split` from split.json, concatenates
@@ -47,8 +48,8 @@ def discover_sessions(include_dry):
     return out
 
 
-def session_df(session, force):
-    cached = common.PROCESSED_DIR / "sessions" / f"{session}.parquet"
+def session_df(session, force, out_dir):
+    cached = Path(out_dir) / "sessions" / f"{session}.parquet"
     if cached.exists() and not force:
         return pd.read_parquet(cached)
     df, _ = extract.extract_session(session)
@@ -71,7 +72,8 @@ def load_split(split_path):
     return sess_split
 
 
-def build(split_path, force, include_dry):
+def build(split_path, force, include_dry, out_dir=None):
+    out_dir = Path(out_dir) if out_dir is not None else common.PROCESSED_DIR
     sess_split = load_split(split_path)
     sessions = discover_sessions(include_dry)
     if not sessions:
@@ -82,7 +84,7 @@ def build(split_path, force, include_dry):
         if s not in sess_split:
             print(f"[WARN] session {s} not in split file; skipping", flush=True)
             continue
-        df = session_df(s, force)
+        df = session_df(s, force, out_dir)
         n_boundary = int(df["is_boundary"].sum())
         kept = df[~df["is_boundary"]].copy()
         kept["split"] = sess_split[s]
@@ -99,8 +101,8 @@ def build(split_path, force, include_dry):
     full = pd.concat(parts, ignore_index=True)
     full = full.sort_values(["session", "window_start_epoch", "host_mac"]).reset_index(drop=True)
 
-    common.PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    out = common.PROCESSED_DIR / "testbed_windows.parquet"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / "testbed_windows.parquet"
     full.to_parquet(out, index=False)
 
     features = _feature_columns(full)
@@ -111,7 +113,7 @@ def build(split_path, force, include_dry):
         "testbed_only": [c for c in common.TESTBED_ONLY_FEATURES if c in features],
         "flow_features": [c for c in common.FLOW_FEATURES if c in features],
     }
-    (common.PROCESSED_DIR / "feature_list.json").write_text(json.dumps(feature_list, indent=2))
+    (out_dir / "feature_list.json").write_text(json.dumps(feature_list, indent=2))
 
     report["out"] = str(out)
     report["total_rows"] = len(full)
@@ -125,11 +127,15 @@ def build(split_path, force, include_dry):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", default=str(common.SPLIT_PATH))
+    ap.add_argument("--out-dir", default=str(common.PROCESSED_DIR),
+                    help="directory for testbed_windows.parquet, feature_list.json and the "
+                         "per-session parquet cache (default data/processed; use a separate dir "
+                         "per corpus so builds never overwrite each other)")
     ap.add_argument("--force", action="store_true", help="re-extract sessions even if cached")
     ap.add_argument("--include-dry", action="store_true",
                     help="include dry-run sessions (smoke-testing the builder only)")
     args = ap.parse_args()
-    build(args.split, args.force, args.include_dry)
+    build(args.split, args.force, args.include_dry, args.out_dir)
 
 
 if __name__ == "__main__":

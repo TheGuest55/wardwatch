@@ -20,18 +20,28 @@ def _sha(p):
 
 
 class TestManifestVerify(unittest.TestCase):
-    def _session(self, tmp, name="sX"):
+    def _session(self, tmp, name="sX", entry_style="dict"):
+        """Write a session + manifest. `entry_style="dict"` matches merge_session.py's real schema
+        ({"sha256":..,"bytes":..}); "str" is the legacy bare-hex form. Both must verify."""
         sdir = Path(tmp) / name
         sdir.mkdir(parents=True)
         (sdir / "a.txt").write_text("hello")
         (sdir / "b.bin").write_bytes(b"\x00\x01\x02")
-        manifest = {"files": {"a.txt": _sha(sdir / "a.txt"), "b.bin": _sha(sdir / "b.bin")}}
+
+        def entry(p):
+            if entry_style == "dict":
+                return {"sha256": _sha(p), "bytes": p.stat().st_size}
+            return _sha(p)
+
+        manifest = {"session": name,
+                    "files": {"a.txt": entry(sdir / "a.txt"), "b.bin": entry(sdir / "b.bin")},
+                    "n_files": 2, "n_runs": 0}
         (sdir / "manifest.json").write_text(json.dumps(manifest))
         return sdir
 
-    def test_ok_then_mismatch(self):
+    def _ok_then_mismatch(self, entry_style):
         with tempfile.TemporaryDirectory() as tmp:
-            sdir = self._session(tmp)
+            sdir = self._session(tmp, entry_style=entry_style)
             orig = common.SESSIONS_DIR
             common.SESSIONS_DIR = Path(tmp)
             try:
@@ -43,6 +53,14 @@ class TestManifestVerify(unittest.TestCase):
                 self.assertIn("a.txt", mv2["mismatches"])
             finally:
                 common.SESSIONS_DIR = orig
+
+    def test_ok_then_mismatch_dict_schema(self):
+        # Real merge_session.py schema: {"sha256":..,"bytes":..} per file.
+        self._ok_then_mismatch("dict")
+
+    def test_ok_then_mismatch_legacy_str_schema(self):
+        # Back-compat: a bare hex string per file still verifies.
+        self._ok_then_mismatch("str")
 
 
 class TestAttackWindowsWithinIntervals(unittest.TestCase):
