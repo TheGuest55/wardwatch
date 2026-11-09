@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-IMAGE="${ANALYSIS_IMAGE:-wardwatch-analysis:0.1.0}"
+IMAGE="${ANALYSIS_IMAGE:-wardwatch-analysis:0.2.0}"
 CMD="${1:-}"
 shift || true
 
