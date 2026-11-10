@@ -1,7 +1,7 @@
 """Experiment A (time-based split) for the tree classifiers: XGBoost and its Random Forest baseline.
 
-    python -m src.models.train_tree --model xgboost [--for-report]
-    python -m src.models.train_tree --model random_forest [--for-report]
+    python -m src.models.train_tree --model xgboost [--experiment A|B] [--for-report]
+    python -m src.models.train_tree --model random_forest [--experiment A|B] [--for-report]
 
 Protocol (./CLAUDE.md, fixed):
   * Inputs = feature_list.json features only (the harness rejects identifiers). Split = the `split`
@@ -15,6 +15,13 @@ Protocol (./CLAUDE.md, fixed):
   * Feature importances are written next to the record: a leaked identifier/timestamp would show up
     there first (working rule 3: suspiciously good results are bugs until proven otherwise).
   * Seed-0 binary model is saved for the triage layer (calibration happens there, on validation).
+
+Experiment B (leave-one-attack-out), `--experiment B`: for each attack class X
+  * X's attack rows are removed from TRAIN and from VALIDATION, so neither the model, the
+    hyper-parameters nor the threshold ever see X (a deployed system would have no X to tune on);
+  * TEST = the test sessions' benign rows + class X only, so precision and FPR are defined;
+  * same grid / val-max-F1 threshold rule / 5 seeds as A. The model's Experiment-B score is the
+    binary F1 averaged over the withheld classes (the input to the fixed selection rule).
 """
 import argparse
 import itertools
@@ -92,8 +99,85 @@ def importances(name, model, feats):
     return sorted(((f, v / total) for f, v in zip(feats, vals)), key=lambda kv: -kv[1])
 
 
+def run_b(name, ds, args):
+    """Leave-one-attack-out. See the module docstring for the protocol."""
+    feats = ds.feature_names
+
+    def cls_of(split):
+        m = ds.meta(split)
+        return np.where(m["label"].to_numpy() == "attack", m["attack_class"].astype(str), "benign")
+
+    c_tr, c_va, c_te = cls_of("train"), cls_of("val"), cls_of("test")
+    classes = sorted(set(c_tr) - {"benign"})
+    per_class, details = {}, {}
+    for X in classes:
+        ktr, kva = c_tr != X, c_va != X                     # withhold X from train AND val
+        kte = (c_te == "benign") | (c_te == X)              # test: normal + X only
+        Xtr, ytr = ds.X("train")[ktr], ds.y("train")[ktr]
+        Xva, yva = ds.X("val")[kva], ds.y("val")[kva]
+        Xte, yte = ds.X("test")[kte], ds.y("test")[kte]
+        n_pos, n_neg = int(ytr.sum()), int((ytr == 0).sum())
+        if yte.sum() == 0:
+            raise SystemExit(f"class {X} has no test rows: Experiment B undefined for it")
+
+        search = []
+        for params in grid(name):
+            clf = make_model(name, params, 0, n_pos, n_neg).fit(Xtr, ytr)
+            thr, f1 = best_threshold(yva, clf.predict_proba(Xva)[:, 1])
+            search.append({"params": params, "val_f1": f1})
+        params = max(search, key=lambda r: r["val_f1"])["params"]
+
+        seeds = []
+        for seed in SEEDS:
+            clf = make_model(name, params, seed, n_pos, n_neg).fit(Xtr, ytr)
+            thr, _ = best_threshold(yva, clf.predict_proba(Xva)[:, 1])
+            score = clf.predict_proba(Xte)[:, 1]
+            m = mmetrics.binary_metrics(yte, y_score=score, threshold=thr)
+            m["fpr"] = float(((score >= thr) & (yte == 0)).sum() / max((yte == 0).sum(), 1))
+            m["threshold"] = thr
+            seeds.append(m)
+            if seed == 0:
+                imp = importances(name, clf, feats)[:10]
+        per_class[X] = seeds
+        details[X] = {"params": params, "grid_search": search, "per_seed": seeds,
+                      "top_features_seed0": imp, "n_test_attack": int(yte.sum()),
+                      "n_train_attack": n_pos}
+        f = [s["f1"] for s in seeds]
+        r = [s["recall"] for s in seeds]
+        print(f"  withhold {X:13s} F1 {np.mean(f):.4f} +/- {np.std(f):.4f} | recall {np.mean(r):.4f} "
+              f"| P {np.mean([s['precision'] for s in seeds]):.4f} "
+              f"| FPR {np.mean([s['fpr'] for s in seeds]):.5f} | n_test={int(yte.sum())} | {params}")
+
+    agg = {}
+    for X, seeds in per_class.items():
+        for k in ("f1", "precision", "recall", "fpr", "pr_auc", "roc_auc", "accuracy"):
+            v = np.array([s.get(k, np.nan) for s in seeds], dtype=float)
+            agg[f"{k}_{X}_mean"], agg[f"{k}_{X}_std"] = float(np.nanmean(v)), float(np.nanstd(v))
+    # Experiment-B score: per seed, average over withheld classes; then mean +/- std over seeds.
+    for k in ("f1", "precision", "recall", "fpr"):
+        by_seed = np.array([[per_class[X][i][k] for X in classes] for i in range(len(SEEDS))])
+        agg[f"{k}_mean"] = float(by_seed.mean(axis=1).mean())
+        agg[f"{k}_std"] = float(by_seed.mean(axis=1).std())
+
+    out = V2 / "runs" / "expB"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{name}_details.json").write_text(json.dumps(details, indent=2, default=str))
+    rec = tracking.build_run_record(
+        experiment="B", model=name, role="classifier",
+        params={"grid": GRIDS[name], "seeds": list(SEEDS), "threshold_rule": "val-max-F1",
+                "withheld_from": "train+val", "classes": classes},
+        metrics=agg, tags={"dataset": "v2", "details": str(out / f"{name}_details.json")},
+        seed=SEEDS[0], split_path=str(SPLIT), dataset_path=str(DATASET),
+        for_report=args.for_report)
+    tracking.log_run(rec, json_path=str(out / f"{name}.json"), use_mlflow=not args.no_mlflow)
+    print(f"\n[{name}] EXPERIMENT B binary F1 (mean over withheld classes) "
+          f"{agg['f1_mean']:.4f} +/- {agg['f1_std']:.4f} | recall {agg['recall_mean']:.4f} "
+          f"| FPR {agg['fpr_mean']:.5f}")
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--experiment", choices=["A", "B"], default="A")
     ap.add_argument("--model", choices=sorted(GRIDS), required=True)
     ap.add_argument("--for-report", action="store_true",
                     help="refuse to write the record unless provenance is complete")
@@ -113,6 +197,8 @@ def main():
         m = ds.meta(s)
         cls = sorted(m.loc[m["label"] == "attack", "attack_class"].astype(str).unique())
         print(f"  {s} attack classes: {cls}")
+    if args.experiment == "B":
+        return run_b(name, ds, args)
 
     # ---- 1. model selection on validation (seed 0) ----
     search = []
