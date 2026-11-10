@@ -181,10 +181,27 @@ CIC_DIR = common.PROCESSED_DIR / "cic"
 SHARED_CLASSES = ("arp_mitm", "recon_scan", "syn_flood", "mqtt_flood")
 
 
-def _domain(path, fl_path):
+# Experiment C sensitivity variants for the capture-medium artifact (REPORT_NOTES 2026-11-11):
+# Docker's veth leaves frames unpadded (ARP 42 B, bare SYN 54 B); real Ethernet pads to 60 B.
+#   none   : features as extracted (the reported Experiment C)
+#   pad60  : min/max_pkt_size clipped to >= 60 in BOTH domains — exactly what padding every frame
+#            to 60 B would give for those two features (mean/std/bytes are NOT recomputable from
+#            window rows and are left unchanged; testbed raw PCAPs are needed for a full re-extract)
+#   nosize : every frame-size-derived feature dropped
+SIZE_FEATURES = ("mean_pkt_size", "std_pkt_size", "min_pkt_size", "max_pkt_size",
+                 "bytes_total", "bytes_sent", "bytes_recv")
+
+
+def _domain(path, fl_path, size_variant="none"):
     """Load one domain restricted to Experiment C's contract: shared features only (testbed-only
     payload features dropped), and only benign rows + the shared attack classes."""
     df, fl = mdata.load_dataset(path, fl_path)
+    if size_variant == "pad60":
+        df = df.copy()
+        for c in ("min_pkt_size", "max_pkt_size"):
+            df[c] = df[c].clip(lower=60.0)
+    elif size_variant == "nosize":
+        fl = {**fl, "features": [f for f in fl["features"] if f not in SIZE_FEATURES]}
     cls = np.where(df["label"] == "attack", df["attack_class"].astype(str), "benign")
     keep = (df["label"] == "benign") | np.isin(cls, SHARED_CLASSES)
     df = df[keep.to_numpy()].reset_index(drop=True)
@@ -201,8 +218,10 @@ def run_c(name, args):
     threshold on the SOURCE domain's validation split, then score the TARGET domain's test split
     as trained (no target data used for anything). In-domain scores on the same test sets are
     reported alongside so the degradation is visible (RQ2)."""
-    tb = _domain(DATASET, V2 / "feature_list.json")
-    cic = _domain(CIC_DIR / "cic_windows.parquet", CIC_DIR / "feature_list.json")
+    sv = args.size_variant
+    tb = _domain(DATASET, V2 / "feature_list.json", sv)
+    cic = _domain(CIC_DIR / "cic_windows.parquet", CIC_DIR / "feature_list.json", sv)
+    print(f"[{name}] Experiment C, size variant = {sv}")
     if tb.feature_names != cic.feature_names:
         raise SystemExit(f"feature mismatch: {set(tb.feature_names) ^ set(cic.feature_names)}")
     feats = tb.feature_names
@@ -267,30 +286,33 @@ def run_c(name, args):
                       for i in range(len(SEEDS))]).mean(axis=1)
     agg["f1_mean"], agg["f1_std"] = float(cross.mean()), float(cross.std())
 
-    out = V2 / "runs" / "expC"
+    out = V2 / "runs" / ("expC" if sv == "none" else f"expC_{sv}")
     out.mkdir(parents=True, exist_ok=True)
-    details = {"features": feats, "shared_classes": SHARED_CLASSES,
+    details = {"features": feats, "shared_classes": SHARED_CLASSES, "size_variant": sv,
                "sources": {s: {k: v for k, v in f.items() if k != "models"}
                            for s, f in fitted.items()},
                "thresholds": {s: [t for _, t in f["models"]] for s, f in fitted.items()},
                "per_seed": results}
     (out / f"{name}_details.json").write_text(json.dumps(details, indent=2, default=str))
     rec = tracking.build_run_record(
-        experiment="C", model=name, role="classifier",
+        experiment="C" if sv == "none" else f"C-sens-{sv}", model=name, role="classifier",
         params={"seeds": list(SEEDS), "threshold_rule": "source-val-max-F1 (as trained)",
+                "size_variant": sv,
                 "shared_classes": list(SHARED_CLASSES), "n_features": len(feats),
                 "cic_dataset_sha256": tracking._sha256_file(CIC_DIR / "cic_windows.parquet")},
         metrics=agg, tags={"dataset": "v2+cic", "details": str(out / f"{name}_details.json")},
         seed=SEEDS[0], split_path=str(SPLIT), dataset_path=str(DATASET),
         for_report=args.for_report)
     tracking.log_run(rec, json_path=str(out / f"{name}.json"), use_mlflow=not args.no_mlflow)
-    print(f"\n[{name}] EXPERIMENT C binary F1 (as trained, mean of both directions) "
+    print(f"\n[{name}] EXPERIMENT C [{sv}] binary F1 (as trained, mean of both directions) "
           f"{agg['f1_mean']:.4f} +/- {agg['f1_std']:.4f}")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--experiment", choices=["A", "B", "C"], default="A")
+    ap.add_argument("--size-variant", choices=["none", "pad60", "nosize"], default="none",
+                    help="Experiment C only: frame-size sensitivity check (see SIZE_FEATURES)")
     ap.add_argument("--model", choices=sorted(GRIDS), required=True)
     ap.add_argument("--for-report", action="store_true",
                     help="refuse to write the record unless provenance is complete")
