@@ -1,7 +1,9 @@
 """Experiment A (time-based split) for the tree classifiers: XGBoost and its Random Forest baseline.
 
-    python -m src.models.train_tree --model xgboost [--experiment A|B] [--for-report]
-    python -m src.models.train_tree --model random_forest [--experiment A|B] [--for-report]
+    python -m src.models.train_tree --model xgboost [--experiment A|B|C] [--for-report]
+    python -m src.models.train_tree --model random_forest [--experiment A|B|C] [--for-report]
+
+Experiment C needs data/processed/cic/ from `python -m src.features.extract_cic`.
 
 Protocol (./CLAUDE.md, fixed):
   * Inputs = feature_list.json features only (the harness rejects identifiers). Split = the `split`
@@ -175,15 +177,128 @@ def run_b(name, ds, args):
           f"| FPR {agg['fpr_mean']:.5f}")
 
 
+CIC_DIR = common.PROCESSED_DIR / "cic"
+SHARED_CLASSES = ("arp_mitm", "recon_scan", "syn_flood", "mqtt_flood")
+
+
+def _domain(path, fl_path):
+    """Load one domain restricted to Experiment C's contract: shared features only (testbed-only
+    payload features dropped), and only benign rows + the shared attack classes."""
+    df, fl = mdata.load_dataset(path, fl_path)
+    cls = np.where(df["label"] == "attack", df["attack_class"].astype(str), "benign")
+    keep = (df["label"] == "benign") | np.isin(cls, SHARED_CLASSES)
+    df = df[keep.to_numpy()].reset_index(drop=True)
+    return mdata.Dataset(df, fl, include_testbed_only=False, scale=False)
+
+
+def _classes(ds, split):
+    m = ds.meta(split)
+    return np.where(m["label"].to_numpy() == "attack", m["attack_class"].astype(str), "benign")
+
+
+def run_c(name, args):
+    """Cross-dataset (testbed <-> CICIoMT2024). Each direction: select hyper-parameters and the
+    threshold on the SOURCE domain's validation split, then score the TARGET domain's test split
+    as trained (no target data used for anything). In-domain scores on the same test sets are
+    reported alongside so the degradation is visible (RQ2)."""
+    tb = _domain(DATASET, V2 / "feature_list.json")
+    cic = _domain(CIC_DIR / "cic_windows.parquet", CIC_DIR / "feature_list.json")
+    if tb.feature_names != cic.feature_names:
+        raise SystemExit(f"feature mismatch: {set(tb.feature_names) ^ set(cic.feature_names)}")
+    feats = tb.feature_names
+    domains = {"testbed": tb, "cic": cic}
+    for d, ds in domains.items():
+        for s in mdata.SPLITS:
+            c = _classes(ds, s)
+            print(f"  {d:8s} {s:5s} rows={len(c):7d} " +
+                  " ".join(f"{k}={int((c == k).sum())}" for k in ("benign",) + SHARED_CLASSES))
+
+    fitted = {}
+    for src, ds in domains.items():
+        Xtr, ytr, Xva, yva = ds.X("train"), ds.y("train"), ds.X("val"), ds.y("val")
+        n_pos, n_neg = int(ytr.sum()), int((ytr == 0).sum())
+        search = []
+        for params in grid(name):
+            clf = make_model(name, params, 0, n_pos, n_neg).fit(Xtr, ytr)
+            thr, f1 = best_threshold(yva, clf.predict_proba(Xva)[:, 1])
+            search.append({"params": params, "val_f1": f1})
+        params = max(search, key=lambda r: r["val_f1"])["params"]
+        print(f"[{name}] source={src}: selected {params}")
+        models = []
+        for seed in SEEDS:
+            clf = make_model(name, params, seed, n_pos, n_neg).fit(Xtr, ytr)
+            thr, _ = best_threshold(yva, clf.predict_proba(Xva)[:, 1])
+            models.append((clf, thr))
+        fitted[src] = {"params": params, "grid_search": search, "models": models,
+                       "imp": importances(name, models[0][0], feats)[:10]}
+
+    results = {}
+    for src in domains:
+        for tgt, dt in domains.items():
+            Xte, yte, cte = dt.X("test"), dt.y("test"), _classes(dt, "test")
+            per_seed = []
+            for clf, thr in fitted[src]["models"]:
+                score = clf.predict_proba(Xte)[:, 1]
+                m = mmetrics.binary_metrics(yte, y_score=score, threshold=thr)
+                pred = score >= thr
+                m["fpr"] = float((pred & (yte == 0)).sum() / max((yte == 0).sum(), 1))
+                for c in SHARED_CLASSES:
+                    if (cte == c).any():
+                        m[f"recall_{c}"] = float(pred[cte == c].mean())
+                per_seed.append(m)
+            key = f"{src}->{tgt}"
+            results[key] = per_seed
+            f = [m["f1"] for m in per_seed]
+            print(f"  {key:16s} F1 {np.mean(f):.4f} +/- {np.std(f):.4f} | "
+                  f"P {np.mean([m['precision'] for m in per_seed]):.4f} "
+                  f"R {np.mean([m['recall'] for m in per_seed]):.4f} "
+                  f"FPR {np.mean([m['fpr'] for m in per_seed]):.5f} | recall/class " +
+                  str({c: round(float(np.mean([m[f'recall_{c}'] for m in per_seed])), 3)
+                       for c in SHARED_CLASSES if f"recall_{c}" in per_seed[0]}))
+
+    agg = {}
+    for key, per_seed in results.items():
+        tag = key.replace("->", "_to_")
+        for k in sorted({k for m in per_seed for k in m if isinstance(m[k], (int, float))}):
+            v = np.array([m.get(k, np.nan) for m in per_seed], dtype=float)
+            agg[f"{tag}_{k}_mean"], agg[f"{tag}_{k}_std"] = float(np.nanmean(v)), float(np.nanstd(v))
+    # Experiment-C score for the selection rule: as-trained F1 averaged over BOTH directions.
+    cross = np.array([[results["testbed->cic"][i]["f1"], results["cic->testbed"][i]["f1"]]
+                      for i in range(len(SEEDS))]).mean(axis=1)
+    agg["f1_mean"], agg["f1_std"] = float(cross.mean()), float(cross.std())
+
+    out = V2 / "runs" / "expC"
+    out.mkdir(parents=True, exist_ok=True)
+    details = {"features": feats, "shared_classes": SHARED_CLASSES,
+               "sources": {s: {k: v for k, v in f.items() if k != "models"}
+                           for s, f in fitted.items()},
+               "thresholds": {s: [t for _, t in f["models"]] for s, f in fitted.items()},
+               "per_seed": results}
+    (out / f"{name}_details.json").write_text(json.dumps(details, indent=2, default=str))
+    rec = tracking.build_run_record(
+        experiment="C", model=name, role="classifier",
+        params={"seeds": list(SEEDS), "threshold_rule": "source-val-max-F1 (as trained)",
+                "shared_classes": list(SHARED_CLASSES), "n_features": len(feats),
+                "cic_dataset_sha256": tracking._sha256_file(CIC_DIR / "cic_windows.parquet")},
+        metrics=agg, tags={"dataset": "v2+cic", "details": str(out / f"{name}_details.json")},
+        seed=SEEDS[0], split_path=str(SPLIT), dataset_path=str(DATASET),
+        for_report=args.for_report)
+    tracking.log_run(rec, json_path=str(out / f"{name}.json"), use_mlflow=not args.no_mlflow)
+    print(f"\n[{name}] EXPERIMENT C binary F1 (as trained, mean of both directions) "
+          f"{agg['f1_mean']:.4f} +/- {agg['f1_std']:.4f}")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--experiment", choices=["A", "B"], default="A")
+    ap.add_argument("--experiment", choices=["A", "B", "C"], default="A")
     ap.add_argument("--model", choices=sorted(GRIDS), required=True)
     ap.add_argument("--for-report", action="store_true",
                     help="refuse to write the record unless provenance is complete")
     ap.add_argument("--no-mlflow", action="store_true")
     args = ap.parse_args()
     name = args.model
+    if args.experiment == "C":
+        return run_c(name, args)
 
     df, fl = mdata.load_dataset(DATASET, V2 / "feature_list.json")
     ds = mdata.Dataset(df, fl, scale=False)          # trees: no scaling
