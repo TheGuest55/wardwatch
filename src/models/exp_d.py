@@ -123,7 +123,8 @@ def make_model(name, n_classes, seed):
         return XGBClassifier(objective="multi:softprob", eval_metric="mlogloss", **kw)
     if name == "random_forest":
         from sklearn.ensemble import RandomForestClassifier
-        return RandomForestClassifier(n_estimators=200, max_depth=None, min_samples_leaf=1,
+        # sklearn defaults (100 trees, full depth) — the paper does not report its RF settings
+        return RandomForestClassifier(n_estimators=100, max_depth=None, min_samples_leaf=1,
                                       n_jobs=N_JOBS, random_state=seed)
     raise ValueError(name)
 
