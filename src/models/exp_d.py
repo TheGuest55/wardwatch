@@ -96,9 +96,25 @@ def load_split(split, raw=RAW):
         df["is_val"] = (np.arange(n) >= int(np.floor(n * (1 - VAL_TAIL)))) if split == "train" else False
         parts.append(df)
     df = pd.concat(parts, ignore_index=True)
-    df["c6"] = df["c19"].map(category_of)
-    df["c2"] = np.where(df["c19"] == "Benign", "Benign", "Attack")
+    # labels as categoricals: millions of Python string objects otherwise (the first full run
+    # was OOM-killed at 8 GB)
+    for c in ("c19", "source_file"):
+        df[c] = df[c].astype("category")
+    df["c6"] = df["c19"].map(category_of).astype("category")
+    df["c2"] = pd.Categorical(np.where(df["c19"] == "Benign", "Benign", "Attack"))
     return df
+
+
+def to_arrays(tr, te, feats, tasks):
+    """Build the float32 matrices ONCE (fit / val / test) and small label arrays per task, so no
+    task re-copies the 7M-row table."""
+    val = tr["is_val"].to_numpy(bool)
+    A = {"Xf": tr.loc[~val, feats].to_numpy(np.float32), "Xv": tr.loc[val, feats].to_numpy(np.float32),
+         "Xt": te[feats].to_numpy(np.float32), "y": {}}
+    for t in tasks:
+        c = f"c{t}"
+        A["y"][t] = (tr[c].to_numpy()[~val], tr[c].to_numpy()[val], te[c].to_numpy())
+    return A
 
 
 def check_complete(tr, te):
@@ -137,14 +153,13 @@ def scores(y, p, labels):
             "recall_macro": float(rc), "f1_macro": float(f1)}
 
 
-def run(name, tr, te, feats, task, seed):
+def run(name, A, feats, task, seed):
     from sklearn.preprocessing import LabelEncoder
-    col = f"c{task}"
-    enc = LabelEncoder().fit(tr[col])
-    fit, val = tr[~tr["is_val"]], tr[tr["is_val"]]
-    Xf, yf = fit[feats].to_numpy(np.float32), enc.transform(fit[col])
-    Xv, yv = val[feats].to_numpy(np.float32), enc.transform(val[col])
-    Xt, yt = te[feats].to_numpy(np.float32), enc.transform(te[col])
+    lf, lv, lt = A["y"][task]
+    enc = LabelEncoder().fit(np.concatenate([lf, lv]))
+    Xf, yf = A["Xf"], enc.transform(lf)
+    Xv, yv = A["Xv"], enc.transform(lv)
+    Xt, yt = A["Xt"], enc.transform(lt)
     m = make_model(name, len(enc.classes_), seed)
     t0 = time.perf_counter()
     if name == "xgboost":
@@ -201,13 +216,20 @@ def main():
           f"{len(feats)} features | dropped {sorted(drop) or 'none'} | classes {tr['c19'].nunique()}")
     print("  test rows per 6-cat:", te["c6"].value_counts().to_dict())
     tag = "" if not drop else "_no" + "_".join(sorted(drop)).lower()
+    rows = {"train": len(tr), "test": len(te)}
+    files = {"train": sorted(map(str, tr["source_file"].unique())),
+             "test": sorted(map(str, te["source_file"].unique()))}
+    A = to_arrays(tr, te, feats, args.tasks)
+    del tr, te
+    import gc
+    gc.collect()
 
     for name in args.models:
         results, details = {}, {}
         for task in args.tasks:
             per_seed, pcs, tops = [], [], []
             for seed in range(args.seeds):
-                m, pc, top = run(name, tr, te, feats, task, seed)
+                m, pc, top = run(name, A, feats, task, seed)
                 per_seed.append(m)
                 pcs.append(pc)
                 tops.append(top)
@@ -234,9 +256,7 @@ def main():
         OUT.mkdir(parents=True, exist_ok=True)
         det = OUT / f"{name}{tag}_details.json"
         det.write_text(json.dumps({"features": feats, "dropped": sorted(drop), "tasks": details,
-                                   "rows": {"train": len(tr), "test": len(te)},
-                                   "files": {"train": sorted(tr["source_file"].unique()),
-                                             "test": sorted(te["source_file"].unique())}},
+                                   "rows": rows, "files": files},
                                   indent=2, default=str))
         rec = tracking.build_run_record(
             experiment="D" if not drop else f"D-drop-{'-'.join(sorted(drop))}", model=name,
@@ -249,8 +269,7 @@ def main():
         # provenance for D: the CIC CSVs are the dataset; hash the file list, not one file
         rec["provenance"]["split_file"] = "CIC official train/test folders"
         rec["provenance"]["split_sha256"] = tracking.hashlib.sha256(
-            "\n".join(sorted(tr["source_file"].unique()) + sorted(te["source_file"].unique()))
-            .encode()).hexdigest()
+            "\n".join(files["train"] + files["test"]).encode()).hexdigest()
         rec["provenance"]["dataset_sha256"] = tracking.hashlib.sha256(
             "".join(tracking._sha256_file(p) for p in sorted(RAW.rglob("*.csv"))).encode()).hexdigest()
         rec["for_report"] = bool(args.for_report)
