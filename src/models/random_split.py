@@ -102,7 +102,7 @@ def evaluate(name, Xtr, ytr, Xva, yva, Xte, yte, cls_te, seed, feats):
     m["threshold"], m["val_f1"] = thr, best["val_f1"]
     for c in sorted(set(cls_te) - {"benign"}):
         m[f"recall_{c}"] = float(pred[cls_te == c].mean())
-    return m, best["params"], importances(name, clf, feats)[:10]
+    return m, best["params"], importances(name, clf, feats)[:10], score, pred
 
 
 def main():
@@ -110,6 +110,8 @@ def main():
     ap.add_argument("--model", choices=sorted(GRIDS), required=True)
     ap.add_argument("--seeds", type=int, default=1,
                     help="number of seeds (default 1, as fixed in the proposal)")
+    ap.add_argument("--save-predictions", action="store_true",
+                    help="write seed-0 random-split test predictions for src.models.bootstrap_ci")
     ap.add_argument("--for-report", action="store_true")
     ap.add_argument("--no-mlflow", action="store_true")
     args = ap.parse_args()
@@ -133,8 +135,11 @@ def main():
     for seed in range(args.seeds):
         rand_idx = random_split_indices(cls, sizes, seed)
         for kind, (tr, va, te) in (("time", time_idx), ("random", rand_idx)):
-            m, params, imp = evaluate(name, X[tr], y[tr], X[va], y[va], X[te], y[te], cls[te],
-                                      seed, feats)
+            m, params, imp, score, pred = evaluate(name, X[tr], y[tr], X[va], y[va], X[te], y[te],
+                                                   cls[te], seed, feats)
+            if kind == "random" and seed == 0 and args.save_predictions:
+                from .predictions import save_predictions
+                print(f"  saved {save_predictions(meta.iloc[te], y[te], score, pred, 'random', name)}")
             m["neighbour_in_train"] = neighbour_in_train(meta.iloc[tr], meta.iloc[te])
             m["attack_run_in_train"] = attack_run_in_train(meta.iloc[tr], meta.iloc[te])
             results[kind].append(m)
