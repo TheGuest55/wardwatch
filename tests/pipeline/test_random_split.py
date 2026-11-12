@@ -52,6 +52,14 @@ class TestLeakageDiagnostics(unittest.TestCase):
                       ("r01", "aa", 120.0, "benign", None)])   # 15 s away -> no
         self.assertAlmostEqual(neighbour_in_train(train, test), 2 / 5)
 
+    def test_row_subsets_with_shuffled_index(self):
+        # Regression: callers pass meta.iloc[idx] subsets whose index is not 0..n-1. An index-aligned
+        # Series join silently produced NaN keys and under-counted neighbours (6.8% instead of ~75%).
+        full = _meta([("r01", "aa", float(t), "benign", None) for t in range(0, 100, 5)])
+        tr, te = full.iloc[0::2], full.iloc[1::2]          # alternate windows: every test row has both
+        self.assertEqual(neighbour_in_train(tr, te), 1.0)  # neighbours in train
+        self.assertEqual(neighbour_in_train(tr.iloc[::-1], te.sample(frac=1, random_state=0)), 1.0)
+
     def test_disjoint_sessions_have_zero_overlap(self):
         train = _meta([("r01", "aa", 100.0, "attack", "run1")])
         test = _meta([("r05", "aa", 105.0, "attack", "run9")])

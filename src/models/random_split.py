@@ -62,13 +62,17 @@ def neighbour_in_train(meta_train, meta_test, step=WINDOW_S):
     train."""
     if len(meta_test) == 0:
         return float("nan")
-    key = lambda s, h, t: s.astype(str) + "|" + h.astype(str) + "|" + t.astype(str)
-    t_tr = np.rint(meta_train["window_start_epoch"].to_numpy(dtype=float)).astype(np.int64)
-    seen = set(key(meta_train["session"], meta_train["host_mac"], pd.Series(t_tr)))
-    t_te = np.rint(meta_test["window_start_epoch"].to_numpy(dtype=float)).astype(np.int64)
-    s, h = meta_test["session"].reset_index(drop=True), meta_test["host_mac"].reset_index(drop=True)
-    before = key(s, h, pd.Series(t_te - step)).isin(seen).to_numpy()
-    after = key(s, h, pd.Series(t_te + step)).isin(seen).to_numpy()
+
+    def keys(m, shift=0):
+        # Plain arrays, never index-aligned Series: callers pass row subsets (iloc) whose index is
+        # not 0..n-1, and pandas would silently align on it and produce NaN keys.
+        t = np.rint(m["window_start_epoch"].to_numpy(dtype=float)).astype(np.int64) + shift
+        return list(zip(m["session"].astype(str).to_numpy(), m["host_mac"].astype(str).to_numpy(),
+                        t.tolist()))
+
+    seen = set(keys(meta_train))
+    before = np.array([k in seen for k in keys(meta_test, -step)])
+    after = np.array([k in seen for k in keys(meta_test, +step)])
     return float((before | after).mean())
 
 
