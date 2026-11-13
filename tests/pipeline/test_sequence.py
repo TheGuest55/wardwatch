@@ -34,7 +34,7 @@ def code(session, host, i):
     return SESSION_CODE[session] * 1000 + HOST_CODE[host] * 100 + i + 1   # never 0
 
 
-def _rows(session, split, host, steps, labels=None, classes=None):
+def _rows(session, split, host, steps, labels=None, classes=None, excl=None):
     out = []
     for i in steps:
         out.append({
@@ -44,6 +44,8 @@ def _rows(session, split, host, steps, labels=None, classes=None):
             "f1": float(code(session, host, i)), "f2": float(i),
             "label": (labels or {}).get(i, "benign"),
             "attack_class": (classes or {}).get(i),
+            # boundary windows have attack_class None; exclusion_class carries the straddled run's class
+            "exclusion_class": (excl or {}).get(i, (classes or {}).get(i)),
         })
     return out
 
@@ -56,9 +58,10 @@ def synth():
     rows = []
     rows += _rows("a", "train", "H1", [0, 1, 2, 3, 6, 7, 8, 9],
                   labels={3: "victim", 7: "boundary", 8: "attack"},
-                  classes={3: "syn_flood", 7: "syn_flood", 8: "syn_flood"})
+                  classes={3: "syn_flood", 8: "syn_flood"}, excl={7: "syn_flood"})
     rows += _rows("a", "train", "H2", [0, 1, 2])
-    rows += _rows("a", "train", "H3", [6, 7, 8, 9])
+    # H3: its first window is a boundary row of a syn_flood run (attack_class None, as the labeller leaves it)
+    rows += _rows("a", "train", "H3", [6, 7, 8, 9], labels={6: "boundary"}, excl={6: "syn_flood"})
     rows += _rows("b", "val", "H1", range(6), labels={5: "attack"}, classes={5: "eavesdrop"})
     rows += _rows("c", "test", "H1", range(10), labels={4: "attack", 7: "attack"},
                   classes={4: "syn_flood", 7: "eavesdrop"})
@@ -174,6 +177,25 @@ class TestSynthetic(unittest.TestCase):
         self.assertFalse(((tr.host_mac == "H1") & (tr.window_start_epoch == T0["a"] + 45)).any())
         # step 0 of the same host is untouched
         self.assertTrue(((tr.host_mac == "H1") & (tr.window_start_epoch == T0["a"])).any())
+
+    def test_boundary_window_straddling_class_x_is_excluded_from_train_val(self):
+        """H3/a step 6 is a boundary window (attack_class None) of a syn_flood run. Without the
+        exclusion_class column it would never match; every sequence that contains it must go."""
+        full = seq.build_sequences(self.df, _Ident(), FEATS, K)["train"].meta
+        out = seq.build_sequences(self.df, _Ident(), FEATS, K, exclude_class="syn_flood")["train"]
+        b = float(code("a", "H3", 6))
+        self.assertFalse((out.X[:, :, 0] == b).any())
+        h3 = lambda m: m[(m.host_mac == "H3")]
+        self.assertEqual(len(h3(full)), 3)              # steps 7,8,9 are targets; 6 is context only
+        self.assertEqual(len(h3(out.meta)), 0)          # all three contain the boundary window (k=4)
+        # exclusion by another class leaves them
+        other = seq.build_sequences(self.df, _Ident(), FEATS, K, exclude_class="eavesdrop")["train"]
+        self.assertEqual(len(h3(other.meta)), 3)
+
+    def test_exclude_class_without_exclusion_column_fails_loudly(self):
+        with self.assertRaises(ValueError):
+            seq.build_sequences(self.df.drop(columns=["exclusion_class"]), _Ident(), FEATS, K,
+                                exclude_class="syn_flood")
 
     def test_exclude_class_test_targets_are_benign_plus_x(self):
         out = seq.build_sequences(self.df, _Ident(), FEATS, K, exclude_class="syn_flood")
@@ -310,12 +332,58 @@ class TestRealV2(unittest.TestCase):
             self.assertTrue(set(s.meta["label"]) <= {"attack", "benign"})
         self.assertTrue(self.df["label"].isin(["victim", "boundary"]).any())
 
+    @staticmethod
+    def _independent_straddles(df):
+        """{(session, host_mac, epoch): set(classes)} for boundary rows, straight from ground_truth.jsonl
+        (own parser, own time conversion) with the label.py rule w0 < start < w0+5 or w0 < end < w0+5."""
+        from datetime import datetime, timezone
+        def ts(z):
+            return datetime.strptime(z, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc).timestamp()
+        gt = {}
+        for sess in df["session"].unique():
+            f = SPLIT_PATH.parent / sess / "ground_truth.jsonl"      # normal sessions (n02) have none
+            rows = [json.loads(l) for l in f.read_text().splitlines() if l.strip()] if f.exists() else []
+            gt[sess] = [(r["class"], ts(r["start_utc"]), ts(r["end_utc"])) for r in rows]
+        b = df[df["label"] == "boundary"]
+        out = {}
+        for r in b.itertuples():
+            w0 = r.window_start_epoch
+            out[(r.session, r.host_mac, w0)] = {c for c, s0, e0 in gt[r.session]
+                                                if (w0 < s0 < w0 + 5) or (w0 < e0 < w0 + 5)}
+        return out
+
+    def test_every_boundary_row_gets_exactly_the_straddled_classes(self):
+        ind = self._independent_straddles(self.df)
+        self.assertEqual(len(ind), int((self.df["label"] == "boundary").sum()))
+        self.assertGreater(len(ind), 0)
+        self.assertTrue(all(len(v) >= 1 for v in ind.values()))
+        b = self.df[self.df["label"] == "boundary"]
+        self.assertTrue(b["attack_class"].isna().all())            # the labeller blanks it
+        for r in b.itertuples():
+            self.assertEqual(set(r.exclusion_class.split(seq.SEP)),
+                             ind[(r.session, r.host_mac, r.window_start_epoch)])
+        nb = self.df[self.df["label"] != "boundary"]
+        same = (nb["exclusion_class"].fillna("") == nb["attack_class"].fillna(""))
+        self.assertTrue(same.all())
+        # label / attack_class / run_id are left as the labeller wrote them
+        orig = pd.concat([pd.read_parquet(V2 / "sessions" / f"{s}.parquet") for s in
+                          json.loads(SPLIT_PATH.read_text())["train"] + json.loads(SPLIT_PATH.read_text())["val"]
+                          + json.loads(SPLIT_PATH.read_text())["test"]], ignore_index=True)
+        pd.testing.assert_series_equal(orig["label"].reset_index(drop=True),
+                                       self.df["label"].reset_index(drop=True), check_names=False)
+        pd.testing.assert_series_equal(orig["attack_class"].reset_index(drop=True),
+                                       self.df["attack_class"].reset_index(drop=True), check_names=False)
+
     def test_exclude_class_removes_every_class_x_window_from_train_and_val(self):
         key = ["session", "host_mac", "window_start_epoch"]
-        for x in ("pump_cmd", "eavesdrop"):
+        ind = self._independent_straddles(self.df)
+        for x in seq.ATTACK_CLASSES:
             out = seq.build_sequences(self.df, self.scaler, self.feats, self.K, exclude_class=x)
             xrows = self.df[self.df["attack_class"] == x][key]
+            bx = pd.DataFrame([k for k, v in ind.items() if x in v], columns=key)
+            xrows = pd.concat([xrows, bx], ignore_index=True)
             self.assertGreater(len(xrows), 0)
+            self.assertGreater(len(bx), 0, x)           # every class has boundary windows
             for split in ("train", "val"):
                 base = self.out[split].meta[key].copy()
                 kept = out[split].meta[key].copy()

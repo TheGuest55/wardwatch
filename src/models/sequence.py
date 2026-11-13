@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from . import data as mdata
+from ..labels import label as labelling
 
 SPLITS = mdata.SPLITS
 STEP = 5                                            # seconds per window
@@ -27,6 +28,7 @@ ATTACK_CLASSES = ("arp_mitm", "bruteforce", "eavesdrop", "mqtt_flood",
                   "pump_cmd", "recon_scan", "spoof_vitals", "syn_flood")
 CLASS_ORDER = ("benign",) + ATTACK_CLASSES
 TARGET_LABELS = ("attack", "benign")
+SEP = "|"                                           # separator inside exclusion_class
 META_KEYS = ["session", "host_mac", "host_ip", "host_role", "run_id", "attack_class",
              "window_start_epoch", "label"]
 
@@ -46,10 +48,42 @@ class SeqSet:
     meta: pd.DataFrame     # one row per target, META_KEYS columns
 
 
-def load_sessions(sessions_dir, split_path):
+def exclusion_classes(df, ground_truth_dir):
+    """Metadata column `exclusion_class` (never an input): the attack class(es) a window belongs to for
+    the purpose of Experiment B exclusion, joined with "|". Normal rows carry their attack_class
+    (victim rows keep theirs; attack rows have it). BOUNDARY rows have attack_class = None (the
+    labeller blanks it), so each gets the class of every ground-truth run it straddles, by exactly the
+    label.py rule: window [w0, w0 + WINDOW) straddles a run if w0 < start < w1 or w0 < end < w1. A
+    boundary window that straddles no run is a labelling bug and fails loudly. The label, attack_class
+    and run_id columns are left untouched."""
+    out = df["attack_class"].astype(object).where(df["attack_class"].notna(), None).copy()
+    bmask = (df["label"] == "boundary").to_numpy()
+    if not bmask.any():
+        return out
+    W = labelling.WINDOW
+    ivs = {}
+    for sess in df.loc[bmask, "session"].unique():
+        ivs[sess], _, _ = labelling.load_ground_truth(Path(ground_truth_dir) / str(sess))
+    for i in np.flatnonzero(bmask):
+        w0 = int(df["window_start_epoch"].iat[i])
+        w1 = w0 + W
+        sess = df["session"].iat[i]
+        classes = sorted({iv["class"] for iv in ivs[sess]
+                          if (w0 < iv["start"] < w1) or (w0 < iv["end"] < w1)})
+        if not classes:
+            raise ValueError(f"boundary window {sess}/{df['host_mac'].iat[i]}/{w0} straddles no "
+                             f"ground-truth run: labelling bug")
+        out.iat[i] = SEP.join(classes)
+    return out
+
+
+def load_sessions(sessions_dir, split_path, ground_truth_dir=None):
     """Read every per-session parquet listed in split_v2.json and assign its `split` from that file
-    (the per-session parquets have no split column). Asserts the splits do not overlap."""
+    (the per-session parquets have no split column). Asserts the splits do not overlap. Adds the
+    metadata column `exclusion_class` from the read-only ground truth in `ground_truth_dir`
+    (default: the folder holding split_path, i.e. data/raw/sessions/<session>/ground_truth.jsonl)."""
     split_map = json.loads(Path(split_path).read_text())
+    gt_dir = Path(ground_truth_dir) if ground_truth_dir else Path(split_path).parent
     seen = {}
     for split, sessions in split_map.items():
         for s in sessions:
@@ -66,7 +100,10 @@ def load_sessions(sessions_dir, split_path):
             part = pd.read_parquet(f)
             part["split"] = split
             frames.append(part)
-    return pd.concat(frames, ignore_index=True)
+    df = pd.concat(frames, ignore_index=True)
+    if "label" in df.columns and "attack_class" in df.columns:
+        df["exclusion_class"] = exclusion_classes(df, gt_dir)
+    return df
 
 
 def fit_scaler(df_v2, feature_list):
@@ -111,6 +148,12 @@ def build_sequences(df, scaler, feature_names, k, use_presence=True, exclude_cla
     epoch = df["window_start_epoch"].to_numpy(dtype=np.int64)
     label = df["label"].to_numpy()
     aclass = df["attack_class"].astype(object).where(df["attack_class"].notna(), None).to_numpy()
+    if exclude_class is not None:
+        if "exclusion_class" not in df.columns:
+            raise ValueError("exclude_class needs the exclusion_class column (use load_sessions): "
+                             "boundary windows carry no attack_class")
+        xcls = df["exclusion_class"].astype(object).where(df["exclusion_class"].notna(), "").to_numpy()
+        in_x = np.array([exclude_class in str(v).split(SEP) for v in xcls], dtype=bool)
     bounds = df.groupby("session")["window_start_epoch"].agg(["min", "max"])
     off = np.arange(k)
 
@@ -131,7 +174,7 @@ def build_sequences(df, scaler, feature_names, k, use_presence=True, exclude_cla
             P[k - 1 + gi, nf] = 1.0
             hasx = np.zeros(T + k - 1, dtype=bool)
             if exclude_class is not None:
-                hasx[k - 1 + gi] = aclass[pos] == exclude_class
+                hasx[k - 1 + gi] = in_x[pos]
 
             lab = label[pos]
             ac = aclass[pos]
