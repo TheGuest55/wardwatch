@@ -166,6 +166,22 @@ class TestThresholdAndMacro(unittest.TestCase):
         self.assertAlmostEqual(lstm.macro_f1(y, probs), (1.0 + 0.0 + 0.0) / 3, places=9)
 
 
+class TestMacroFixedLabels(unittest.TestCase):
+    def test_missing_class_counts_as_zero_unlike_sklearn_default(self):
+        from sklearn.metrics import f1_score
+        y = np.array([0, 0, 1, 1])
+        probs = np.eye(3)[[0, 0, 1, 1]]                 # perfect on classes 0 and 1; class 2 absent everywhere
+        default = f1_score(y, probs.argmax(1), average="macro", zero_division=0)
+        self.assertAlmostEqual(default, 1.0)
+        self.assertAlmostEqual(lstm.macro_f1(y, probs), 2 / 3, places=9)   # fixed set: class 2 -> F1 0
+        self.assertNotEqual(lstm.macro_f1(y, probs), default)
+
+    def test_n_classes_comes_from_probs_width(self):
+        y = np.array([0, 1])
+        probs = np.eye(9)[[0, 1]]
+        self.assertAlmostEqual(lstm.macro_f1(y, probs), 2 / 9, places=9)
+
+
 class TestArtefact(unittest.TestCase):
     def test_round_trip_gives_identical_scores(self):
         model, res, probs, cfg, (Xva, yva) = run_once(3)

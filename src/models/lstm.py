@@ -204,13 +204,17 @@ def pick_threshold(y_val, s_val):
 
 
 def macro_f1(y_true_class, probs):
-    """Multiclass macro-F1: argmax over the class probabilities (benign + 8 attack classes), computed
-    over the labels present in y_true or the predictions, zero_division = 0. TEST ONLY, and for
+    """Multiclass macro-F1 over a FIXED label set: argmax of the class probabilities, labels =
+    range(n_classes) with n_classes = probs.shape[1] (benign + 8 attack classes in Experiment A),
+    zero_division = 0. A class missing from both y_true and the predictions therefore counts as F1 = 0
+    in the average (it is not silently dropped as in sklearn's default label set). TEST ONLY, for
     classifiers in Experiment A only (a withheld class cannot be named). Shared definition: the
     XGBoost pair should call this same helper so the numbers are comparable."""
     from sklearn.metrics import f1_score
-    pred = np.argmax(np.asarray(probs), axis=1)
-    return float(f1_score(np.asarray(y_true_class), pred, average="macro", zero_division=0))
+    probs = np.asarray(probs)
+    pred = np.argmax(probs, axis=1)
+    return float(f1_score(np.asarray(y_true_class), pred, labels=list(range(probs.shape[1])),
+                          average="macro", zero_division=0))
 
 
 def save_artefact(path, model, scaler, k, feature_names, class_order, threshold, cfg):
