@@ -263,6 +263,36 @@ def fig_confusion(plt, df, model):
     return _save(fig, f"fig_confusion_expA_{model}")
 
 
+def fig_expd_iat(plt):
+    """Experiment D: macro-F1 on CIC's official split with vs without the IAT column (XGBoost),
+    against the published best (RF, Dadkhah et al. Table 8)."""
+    from .exp_d import PUBLISHED
+    full = _load(RUNS / "expD" / "xgboost.json")["metrics"]
+    noiat = _load(RUNS / "expD" / "xgboost_noiat.json")["metrics"]
+    tasks = [("2", "Binary"), ("6", "6 categories"), ("19", "19 classes")]
+    fig, ax = plt.subplots(figsize=(SINGLE_COL, 1.9))
+    for j, (t, label) in enumerate(tasks):
+        y = len(tasks) - 1 - j
+        pub = PUBLISHED[t]["RF"][3]
+        a, b = full[f"{t}c_f1_macro_mean"], noiat[f"{t}c_f1_macro_mean"]
+        ax.plot([b, a], [y, y], color=GRID, lw=3, zorder=1, solid_capstyle="round")
+        ax.plot(pub, y, "|", ms=11, mew=1.6, color=INK2, zorder=2, label="Published best (RF)" if j == 0 else None)
+        ax.plot(a, y, "o", ms=6, color="#2a78d6", mec="white", mew=1, zorder=3,
+                label="XGBoost, all 45 features" if j == 0 else None)
+        ax.plot(b, y, "o", ms=6, color="#eb6834", mec="white", mew=1, zorder=3,
+                label="XGBoost, IAT removed" if j == 0 else None)
+        ax.annotate(f"{b - a:+.2f}", (b, y), xytext=(-6, 0), textcoords="offset points",
+                    ha="right", va="center", fontsize=6.5, color=INK2)
+    ax.set_yticks(range(len(tasks)), [lbl for _, lbl in tasks][::-1])
+    ax.set_ylim(-0.6, len(tasks) - 0.4)
+    ax.set_xlim(0.62, 1.0)
+    ax.set_xlabel("Macro-F1 on CICIoMT2024 official test split")
+    ax.grid(axis="y", visible=False)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.45, -0.32), ncol=3, handletextpad=0.2,
+              columnspacing=0.8, fontsize=6.3)
+    return _save(fig, "fig_expD_iat")
+
+
 def main():
     plt = _style()
     boot = _load(RUNS / "bootstrap" / "xgb_rf_time_random_details.json")
@@ -273,6 +303,8 @@ def main():
     for m in MODEL_COLOR:
         made += [fig_bands_per_class(plt, cal[m], m), fig_shap_global(plt, cal[m], m),
                  fig_shap_per_class(plt, cal[m], m), fig_confusion(plt, preds[m], m)]
+    if (RUNS / "expD" / "xgboost_noiat.json").exists():
+        made.append(fig_expd_iat(plt))
     plt.close("all")
     for p in made:
         print(f"wrote {p} (+ .pdf)")
