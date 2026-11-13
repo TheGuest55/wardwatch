@@ -2,10 +2,13 @@
 
 For one input sequence [k, d] (d = n_feat + 1 with the is_present channel, or n_feat without), set one
 feature (or one feature group) to SCALED ZERO across the last `last_n` PRESENT windows and record the
-drop in the attack score (1 - P(benign)). Scaled zero is the training mean, i.e. "nothing unusual",
+drop in the attack LOG-ODDS, logit(1 - P(benign)) = logsumexp(attack logits) - benign logit, computed
+from the logits in float64 so it does not saturate when the score is ~1.0 (a probability delta does:
+0.99999 -> 0.9999 is a 10x change in odds but a 0.00009 change in score). The probability delta is
+kept alongside as "delta_prob". Scaled zero is the training mean, i.e. "nothing unusual",
 and it is the same fill value the model sees for gaps and padding. The is_present channel and the
 filled/padded windows are never touched. A positive delta means that feature (group) raised the
-attack score. Returns the top 5 as plain-language strings plus the raw deltas.
+attack log-odds. Returns the top 5 as plain-language strings plus the raw deltas.
 """
 import numpy as np
 import torch
@@ -67,15 +70,19 @@ def humanise(name):
     return " ".join(_WORDS.get(t, t) for t in name.split("_"))
 
 
-def _scores(model, X):
+def _score_and_logodds(model, X):
+    """One forward pass -> (attack score 1 - P(benign) in float32 softmax, as the scorer computes it; attack log-odds
+    log(sum_c>0 exp z_c) - z_0 = logit(score), exact and unsaturated: float64 on the logits)."""
     with torch.no_grad():
-        p = torch.softmax(model.eval()(torch.as_tensor(X)), dim=1).numpy()
-    return (1.0 - p[:, 0]).astype(np.float64)
+        z = model.eval()(torch.as_tensor(X))
+    score = (1.0 - torch.softmax(z, dim=1).numpy()[:, 0]).astype(np.float64)
+    zd = z.double()
+    return score, (torch.logsumexp(zd[:, 1:], dim=1) - zd[:, 0]).numpy()
 
 
 def _sentence(name, delta, m):
     verb = "raised" if delta >= 0 else "lowered"
-    return f"{humanise(name)} in the last {m} windows {verb} the attack score by {abs(delta):.2f}"
+    return f"{humanise(name)} in the last {m} windows {verb} the attack log-odds by {abs(delta):.2f}"
 
 
 def explain(model, seq, last_n=3, groups=None, feature_names=None, use_presence=True, top=5):
@@ -86,7 +93,9 @@ def explain(model, seq, last_n=3, groups=None, feature_names=None, use_presence=
     names]} (adds a group level). Returns
       {"base_score", "last_n", "n_windows_occluded", "present_positions",
        "feature": {"delta": {name: d}, "top": [str...]}, "group": {...} (only when groups given)}
-    delta = base score - score with that feature/group at scaled zero in the last present windows."""
+    delta = base log-odds - log-odds with that feature/group at scaled zero in the last present windows
+    (ranking and sentences use it); delta_prob = the same in attack-score units. last_n >= k means
+    every present window of the sequence."""
     if feature_names is None:
         raise ValueError("feature_names is required")
     seq = np.asarray(seq, dtype=np.float32)
@@ -103,7 +112,8 @@ def explain(model, seq, last_n=3, groups=None, feature_names=None, use_presence=
     if len(pos) == 0:
         raise ValueError("sequence has no present window")
     idx = {f: i for i, f in enumerate(feature_names)}
-    base = float(_scores(model, seq[None])[0])
+    b_s, b_lo = _score_and_logodds(model, seq[None])
+    base, base_lo = float(b_s[0]), float(b_lo[0])
 
     def occlude(cols):
         out = seq.copy()
@@ -112,13 +122,15 @@ def explain(model, seq, last_n=3, groups=None, feature_names=None, use_presence=
 
     def level(items):
         batch = np.stack([occlude([idx[f] for f in fs]) for _, fs in items])
-        s = _scores(model, batch)
-        delta = {name: float(base - s[i]) for i, (name, _) in enumerate(items)}
+        s, lo = _score_and_logodds(model, batch)
+        delta = {name: float(base_lo - lo[i]) for i, (name, _) in enumerate(items)}
+        delta_prob = {name: float(base - s[i]) for i, (name, _) in enumerate(items)}
         order = sorted(delta, key=lambda n: (-delta[n], n))
-        return {"delta": delta, "top": [_sentence(n, delta[n], len(pos)) for n in order[:top]],
+        return {"delta": delta, "delta_prob": delta_prob,
+                "top": [_sentence(n, delta[n], len(pos)) for n in order[:top]],
                 "top_names": order[:top]}
 
-    out = {"base_score": base, "last_n": int(last_n), "n_windows_occluded": int(len(pos)),
+    out = {"base_score": base, "base_logodds": base_lo, "last_n": int(last_n), "n_windows_occluded": int(len(pos)),
            "present_positions": [int(p) for p in pos],
            "feature": level([(f, [f]) for f in feature_names])}
     if groups:

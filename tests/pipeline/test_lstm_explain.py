@@ -118,8 +118,11 @@ class TestOcclusion(unittest.TestCase):
         with torch.no_grad():
             s = 1 - torch.softmax(m(torch.as_tensor(occ)[None]), 1)[0, 0].item()
             s0 = 1 - torch.softmax(m(torch.as_tensor(seq)[None]), 1)[0, 0].item()
-        self.assertAlmostEqual(e["group"]["delta"]["ab"], s0 - s, places=6)
+        logit = lambda p: np.log(p / (1 - p))
+        self.assertAlmostEqual(e["group"]["delta_prob"]["ab"], s0 - s, places=6)
+        self.assertAlmostEqual(e["group"]["delta"]["ab"], logit(s0) - logit(s), places=4)
         self.assertAlmostEqual(e["base_score"], s0, places=6)
+        self.assertAlmostEqual(e["base_logodds"], logit(s0), places=4)
 
     def test_top5_sorted_plain_language_and_deterministic(self):
         m = tiny_model()
@@ -135,7 +138,7 @@ class TestOcclusion(unittest.TestCase):
         self.assertEqual(len(e1["feature"]["top"]), 5)
         d = [e1["feature"]["delta"][n] for n in e1["feature"]["top_names"]]
         self.assertEqual(d, sorted(d, reverse=True))
-        self.assertRegex(e1["feature"]["top"][0], r"^.+ in the last 3 windows (raised|lowered) the attack score by \d\.\d\d$")
+        self.assertRegex(e1["feature"]["top"][0], r"^.+ in the last 3 windows (raised|lowered) the attack log-odds by \d+\.\d\d$")
         self.assertEqual(ex.humanise("mqtt_publish_rate"), "MQTT publish rate")
         self.assertEqual(ex.humanise("MQTT"), "MQTT group")
 
@@ -146,6 +149,27 @@ class TestOcclusion(unittest.TestCase):
         self.assertEqual(e["present_positions"], [1, 2, 3, 4, 5])
         for v in np.concatenate(spy.seen[1:]):
             self.assertTrue((v[0] == 0).all())
+
+    def test_logodds_does_not_saturate(self):
+        # A model whose attack score is 1.0 in float32 both before and after occluding "a": the
+        # probability delta is 0, the log-odds delta is the exact logit difference (20 * 1.0 * 3 = 60).
+        class Lin(nn.Module):
+            def forward(self, x):
+                s = x[:, -3:, 0].sum(1, keepdim=True)
+                z0 = torch.zeros_like(s)
+                return torch.cat([z0, 30.0 + 20.0 * s, torch.full_like(s, -50.0)], 1)
+        seq = make_seq()
+        seq[:, 0] = 1.0
+        e = ex.explain(Lin(), seq, last_n=3, feature_names=NAMES)
+        self.assertEqual(e["base_score"], 1.0)
+        self.assertEqual(e["feature"]["delta_prob"]["a"], 0.0)
+        self.assertAlmostEqual(e["feature"]["delta"]["a"], 60.0, places=5)
+        self.assertEqual(e["feature"]["delta"]["b"], 0.0)
+        self.assertEqual(e["feature"]["top_names"][0], "a")
+
+    def test_last_n_k_covers_every_present_window(self):
+        e = ex.explain(tiny_model(), make_seq(present=(0, 2, 3, 5)), last_n=K, feature_names=NAMES)
+        self.assertEqual(e["present_positions"], [0, 2, 3, 5])
 
     def test_bad_shapes_rejected(self):
         with self.assertRaises(ValueError):
@@ -158,3 +182,31 @@ class TestOcclusion(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVerdictRule(unittest.TestCase):
+    """The fixed rule in lstm_explain_run: top group must be an expected one AND >= 1 nat."""
+    def setUp(self):
+        from src.experiments import lstm_explain_run as r
+        self.r = r
+
+    def _e(self, groups, feats):
+        order = lambda d: sorted(d, key=lambda n: (-d[n], n))
+        return {"group": {"delta": groups, "top_names": order(groups)},
+                "feature": {"delta": feats, "top_names": order(feats)}}
+
+    def test_expected_names_exist_and_cover_all_classes(self):
+        from src.models import sequence
+        self.assertEqual(set(self.r.EXPECTED_GROUPS), set(sequence.ATTACK_CLASSES))
+        self.assertEqual(set(self.r.EXPECTED_FEATURES), set(sequence.ATTACK_CLASSES))
+        for c in sequence.ATTACK_CLASSES:
+            self.assertTrue(self.r.EXPECTED_GROUPS[c] <= set(ex.GROUP_MEMBERS), c)
+            self.assertTrue(self.r.EXPECTED_FEATURES[c] <= set(common.FEATURES), c)
+
+    def test_rule(self):
+        v = self.r.verdict("arp_mitm", self._e({"ARP": 2.0, "MQTT": 0.1}, {"ip_mac_conflict": 1.5}))
+        self.assertTrue(v["useful"]) ; self.assertTrue(v["top_feature_expected"])
+        v = self.r.verdict("arp_mitm", self._e({"ARP": 0.9, "MQTT": 0.1}, {"ip_mac_conflict": 0.5}))
+        self.assertFalse(v["useful"])                       # below 1 nat
+        v = self.r.verdict("arp_mitm", self._e({"MQTT": 3.0, "ARP": 2.0}, {"mqtt_pkts": 2.0}))
+        self.assertFalse(v["useful"]) ; self.assertFalse(v["top_group_expected"])
