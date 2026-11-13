@@ -55,7 +55,10 @@ def binary_metrics(y_true, y_score=None, y_pred=None, threshold=0.5, recall_targ
         y_pred = (np.asarray(y_score, dtype=float) >= threshold).astype(int)
     p, r, f1, _ = precision_recall_fscore_support(
         y_true, y_pred, average="binary", zero_division=0)
+    # accuracy is SECONDARY (the coursework brief names it): with ~98% benign windows an
+    # all-benign predictor already scores ~0.98, so F1 stays the headline.
     out = {"precision": float(p), "recall": float(r), "f1": float(f1),
+           "accuracy": float((y_pred == y_true).mean()) if len(y_true) else float("nan"),
            "n": int(len(y_true)), "n_positive": int((y_true == 1).sum())}
     if y_score is not None and (y_true == 1).any() and (y_true == 0).any():
         out["pr_auc"] = float(average_precision_score(y_true, y_score))

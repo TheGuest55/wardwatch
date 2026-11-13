@@ -74,6 +74,7 @@ class TestMetrics(unittest.TestCase):
         self.assertAlmostEqual(m["f1"], f1_score(y, pred), places=10)
         self.assertAlmostEqual(m["roc_auc"], roc_auc_score(y, score), places=10)
         self.assertAlmostEqual(m["pr_auc"], average_precision_score(y, score), places=10)
+        self.assertAlmostEqual(m["accuracy"], float((pred == y).mean()), places=10)
 
     def test_fpr_at_recall_separable(self):
         y = np.array([0, 0, 0, 1, 1, 1])
