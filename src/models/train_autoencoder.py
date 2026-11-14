@@ -44,6 +44,9 @@ OUT_DIR = V2 / "runs" / "expA"
 MODEL_DIR = V2 / "models" / "expA"
 SEEDS = (0, 1, 2, 3, 4)
 
+CIC_DIR = common.PROCESSED_DIR / "cic"
+SHARED_CLASSES = ("arp_mitm", "recon_scan", "syn_flood", "mqtt_flood")   # testbed <-> CIC overlap
+
 # Small validation grid (architecture). Kept deliberately small: a bigger net on this tabular data
 # overfits normal traffic and the run cost (5 seeds x up to 50 epochs) must stay feasible.
 GRID = {
@@ -105,6 +108,154 @@ def per_feature_error(model, X, feats):
     per = sq.mean(axis=0)
     total = per.sum() or 1.0
     return sorted(((f, float(v / total)) for f, v in zip(feats, per)), key=lambda kv: -kv[1])
+
+
+def _detector_scorer(model_name, params, seed, Xtr_normal, Xva_normal):
+    """Fit either anomaly detector on benign-only data and return (score_fn). Unifies the AE and IF
+    paths so Experiments B and C can treat them identically. score_fn(X) -> higher = more anomalous."""
+    if model_name == "autoencoder":
+        model, _ = _fit_one(params, seed, Xtr_normal, Xva_normal)
+        return lambda X: ae.anomaly_scores(model, X)
+    clf = fit_isolation_forest(params, seed, Xtr_normal)
+    return lambda X: if_scores(clf, X)
+
+
+def _default_params(model_name):
+    """Default architecture / hyper-params for B and C (no per-fold grid: both experiments already
+    loop heavily, and the role's model is fixed before these experiments by Experiment A)."""
+    if model_name == "autoencoder":
+        return {"hidden": (64, 32), "bottleneck": 16}      # Experiment A's selected architecture
+    return {"n_estimators": 200, "max_samples": 1.0}
+
+
+def run_b(model_name, ds, feats, args):
+    """Leave-one-attack-out for an anomaly detector. The detector trains on BENIGN-ONLY traffic, so
+    withholding attack class X never changes training (its structural edge over the supervised
+    trees). We still withhold X from the VALIDATION rows used to pick the threshold -- a deployed
+    system would have no X to tune on -- and TEST on the test sessions' benign rows + class X only,
+    so precision and FPR are defined. 5 seeds -> mean +/- std. Mirrors train_tree.run_b."""
+    Xtr_normal = ds.normal_only("train")
+    Xva_normal = ds.normal_only("val")
+
+    def cls_of(split):
+        m = ds.meta(split)
+        return np.where(m["label"].to_numpy() == "attack", m["attack_class"].astype(str), "benign")
+
+    c_va, c_te = cls_of("val"), cls_of("test")
+    Xva_all, yva = ds.X("val"), ds.y("val")
+    Xte, yte = ds.X("test"), ds.y("test")
+    classes = sorted(set(cls_of("train")) - {"benign"})
+    params = _default_params(model_name)
+    per_class, details = {}, {}
+    for X in classes:
+        kva = c_va != X                                  # withhold X from threshold-fitting val rows
+        kte = (c_te == "benign") | (c_te == X)           # test: benign + X only
+        yva_x, Xva_x = yva[kva], Xva_all[kva]
+        yte_x, Xte_x = yte[kte], Xte[kte]
+        if yte_x.sum() == 0:
+            raise SystemExit(f"class {X} has no test rows: Experiment B undefined for it")
+        seeds = []
+        for seed in SEEDS:
+            score_fn = _detector_scorer(model_name, params, seed, Xtr_normal, Xva_normal)
+            thr = ae.pick_threshold(yva_x, score_fn(Xva_x))
+            score = score_fn(Xte_x)
+            pred = ae.predict(score, thr)
+            m = mmetrics.binary_metrics(yte_x, y_score=score, y_pred=pred)
+            m["fpr"] = float((pred.astype(bool) & (yte_x == 0)).sum() / max((yte_x == 0).sum(), 1))
+            m["threshold"] = thr
+            seeds.append(m)
+        per_class[X] = seeds
+        details[X] = {"per_seed": seeds, "n_test_attack": int(yte_x.sum())}
+        f = [s["f1"] for s in seeds]
+        r = [s["recall"] for s in seeds]
+        print(f"  withhold {X:13s} F1 {np.mean(f):.4f} +/- {np.std(f):.4f} | recall {np.mean(r):.4f} "
+              f"| P {np.mean([s['precision'] for s in seeds]):.4f} "
+              f"| FPR {np.mean([s['fpr'] for s in seeds]):.5f} | n_test={int(yte_x.sum())}")
+
+    agg = {}
+    for X, seeds in per_class.items():
+        for k in ("f1", "precision", "recall", "fpr", "pr_auc", "roc_auc"):
+            v = np.array([s.get(k, np.nan) for s in seeds], dtype=float)
+            agg[f"{k}_{X}_mean"], agg[f"{k}_{X}_std"] = float(np.nanmean(v)), float(np.nanstd(v))
+    # Experiment-B score (selection-rule input): per seed average over withheld classes, then over seeds.
+    for k in ("f1", "precision", "recall", "fpr"):
+        by_seed = np.array([[per_class[X][i][k] for X in classes] for i in range(len(SEEDS))])
+        agg[f"{k}_mean"] = float(by_seed.mean(axis=1).mean())
+        agg[f"{k}_std"] = float(by_seed.mean(axis=1).std())
+
+    out = V2 / "runs" / "expB"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{model_name}_details.json").write_text(json.dumps(details, indent=2, default=str))
+    rec = tracking.build_run_record(
+        experiment="B", model=model_name, role="anomaly",
+        params={**params, "seeds": list(SEEDS), "threshold_rule": "val-max-F1",
+                "withheld_from": "val+test (training is benign-only)", "classes": classes},
+        metrics=agg, tags={"dataset": "v2", "details": str(out / f"{model_name}_details.json")},
+        seed=SEEDS[0], split_path=str(SPLIT), dataset_path=str(DATASET), for_report=args.for_report)
+    tracking.log_run(rec, json_path=str(out / f"{model_name}.json"), use_mlflow=not args.no_mlflow)
+    print(f"\n[{model_name}] EXPERIMENT B binary F1 (mean over withheld classes) "
+          f"{agg['f1_mean']:.4f} +/- {agg['f1_std']:.4f} | recall {agg['recall_mean']:.4f} "
+          f"| FPR {agg['fpr_mean']:.5f}")
+
+
+def _domain(path, fl_path):
+    """Load one domain for Experiment C: shared features only (testbed-only dropped), benign rows +
+    shared attack classes only. Scaled per-domain (train-only)."""
+    df, fl = mdata.load_dataset(path, fl_path)
+    cls = np.where(df["label"] == "attack", df["attack_class"].astype(str), "benign")
+    keep = (df["label"] == "benign") | np.isin(cls, SHARED_CLASSES)
+    df = df[keep].reset_index(drop=True)
+    return mdata.Dataset(df, fl, include_testbed_only=False, scale=True)
+
+
+def run_c(model_name, args):
+    """Cross-dataset (testbed <-> CICIoMT2024), as-trained. Each direction: fit on the SOURCE normal,
+    pick the threshold on the SOURCE validation, score the TARGET test as trained. Mirrors
+    train_tree.run_c. Requires data/processed/cic/ -- exits cleanly (no fake result) if absent."""
+    cic_parquet = CIC_DIR / "cic_windows.parquet"
+    if not cic_parquet.exists():
+        raise SystemExit(
+            f"Experiment C needs {cic_parquet} (CICIoMT2024 extracted features), which is not "
+            f"present. Run `python -m src.features.extract_cic` on the CIC PCAPs first, or obtain "
+            f"the cic/ dataset. Experiment C deferred -- NOT run (CLAUDE.md: never fake a result).")
+    tb = _domain(DATASET, V2 / "feature_list.json")
+    cic = _domain(cic_parquet, CIC_DIR / "feature_list.json")
+    if tb.feature_names != cic.feature_names:
+        raise SystemExit(f"feature mismatch: {set(tb.feature_names) ^ set(cic.feature_names)}")
+    domains = {"testbed": tb, "cic": cic}
+    params = _default_params(model_name)
+    results = {}
+    for src, ds_src in domains.items():
+        for seed in SEEDS:
+            score_fn = _detector_scorer(model_name, params, seed,
+                                        ds_src.normal_only("train"), ds_src.normal_only("val"))
+            thr = ae.pick_threshold(ds_src.y("val"), score_fn(ds_src.X("val")))
+            for tgt, ds_tgt in domains.items():
+                yte = ds_tgt.y("test")
+                pred = ae.predict(score_fn(ds_tgt.X("test")), thr)
+                m = mmetrics.binary_metrics(yte, y_score=score_fn(ds_tgt.X("test")), y_pred=pred)
+                results.setdefault(f"{src}->{tgt}", []).append(m)
+    agg = {}
+    for key, per_seed in results.items():
+        tag = key.replace("->", "_to_")
+        for k in ("f1", "precision", "recall", "pr_auc", "roc_auc"):
+            v = np.array([m.get(k, np.nan) for m in per_seed], dtype=float)
+            agg[f"{tag}_{k}_mean"], agg[f"{tag}_{k}_std"] = float(np.nanmean(v)), float(np.nanstd(v))
+        print(f"  {key:16s} F1 {np.mean([m['f1'] for m in per_seed]):.4f}")
+    cross = np.array([[results['testbed->cic'][i]['f1'], results['cic->testbed'][i]['f1']]
+                      for i in range(len(SEEDS))]).mean(axis=1)
+    agg["f1_mean"], agg["f1_std"] = float(cross.mean()), float(cross.std())
+    out = V2 / "runs" / "expC"
+    out.mkdir(parents=True, exist_ok=True)
+    rec = tracking.build_run_record(
+        experiment="C", model=model_name, role="anomaly",
+        params={**params, "seeds": list(SEEDS), "shared_classes": list(SHARED_CLASSES),
+                "threshold_rule": "source-val-max-F1 (as trained)"},
+        metrics=agg, tags={"dataset": "v2+cic"}, seed=SEEDS[0], split_path=str(SPLIT),
+        dataset_path=str(DATASET), for_report=args.for_report)
+    tracking.log_run(rec, json_path=str(out / f"{model_name}.json"), use_mlflow=not args.no_mlflow)
+    print(f"\n[{model_name}] EXPERIMENT C binary F1 (as trained, both directions) "
+          f"{agg['f1_mean']:.4f} +/- {agg['f1_std']:.4f}")
 
 
 def run_isolation_forest(ds, feats, Xtr_normal, Xva_all, yva, Xte, yte, args):
@@ -179,12 +330,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", choices=["autoencoder", "isolation_forest"], default="autoencoder",
                     help="which anomaly detector to train (the role has two: AE + IF baseline)")
-    ap.add_argument("--experiment", choices=["A"], default="A",
-                    help="A = time-based split (B and C added in later steps)")
+    ap.add_argument("--experiment", choices=["A", "B", "C"], default="A",
+                    help="A = time split; B = leave-one-attack-out; C = cross-dataset (needs cic/)")
     ap.add_argument("--for-report", action="store_true",
                     help="refuse to write the record unless provenance is complete")
     ap.add_argument("--no-mlflow", action="store_true")
     args = ap.parse_args()
+
+    # Experiment C builds its own per-domain datasets (shared features only), so route before loading
+    # the full testbed dataset here.
+    if args.experiment == "C":
+        return run_c(args.model, args)
 
     df, fl = mdata.load_dataset(DATASET, V2 / "feature_list.json")
     ds = mdata.Dataset(df, fl, scale=True)          # both detectors: scale (StandardScaler, train-only)
@@ -195,6 +351,9 @@ def main():
     Xte, yte = ds.X("test"), ds.y("test")           # untouched test
     print(f"[{args.model}] features={len(feats)} train_normal={len(Xtr_normal)} "
           f"val={len(yva)} ({int(yva.sum())} attack) test={len(yte)} ({int(yte.sum())} attack)")
+
+    if args.experiment == "B":
+        return run_b(args.model, ds, feats, args)
 
     if args.model == "isolation_forest":
         return run_isolation_forest(ds, feats, Xtr_normal, Xva_all, yva, Xte, yte, args)
