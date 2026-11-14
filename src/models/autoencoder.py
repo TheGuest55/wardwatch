@@ -116,6 +116,41 @@ def _mean_recon_error(model, X, batch_size=4096):
     return float(reconstruction_error(model, X, batch_size).mean())
 
 
+def anomaly_scores(model, X, batch_size=4096):
+    """The anomaly score per window = reconstruction error. Alias for intent: downstream code asks
+    for "anomaly scores", the model produces them as reconstruction error. Higher = more anomalous."""
+    return reconstruction_error(model, X, batch_size)
+
+
+def pick_threshold(y_val, scores_val):
+    """Error threshold maximising VALIDATION binary F1 (predict attack if score >= t). Ties go to the
+    highest threshold. Raises if validation has no attack rows. Same definition and tie-handling as
+    lstm.pick_threshold, so autoencoder and LSTM thresholds are chosen on identical terms.
+
+    The autoencoder is unsupervised in TRAINING, but the operating threshold is a deployment choice:
+    we set it where benign and attack reconstruction errors separate best on validation (which does
+    contain attacks) — never on test."""
+    y = np.asarray(y_val).astype(int)
+    s = np.asarray(scores_val, dtype=float)
+    P = int(y.sum())
+    if P == 0:
+        raise ValueError("validation has no attack rows: cannot pick a threshold")
+    order = np.argsort(-s, kind="mergesort")
+    ys, sc = y[order], s[order]
+    tp = np.cumsum(ys == 1)
+    fp = np.cumsum(ys == 0)
+    last = np.append(np.flatnonzero(np.diff(sc) != 0), len(sc) - 1)   # end of each tied block
+    tp, fp, thr = tp[last], fp[last], sc[last]
+    f1 = 2 * tp / (2 * tp + fp + (P - tp))
+    i = int(np.argmax(f1))                  # first max in descending-threshold order = highest t
+    return float(thr[i])
+
+
+def predict(scores, threshold):
+    """Binary prediction: 1 (attack) where score >= threshold, else 0."""
+    return (np.asarray(scores, dtype=float) >= float(threshold)).astype(int)
+
+
 def train(model, X_train_normal, X_val_normal, cfg):
     """Train the autoencoder to reconstruct BENIGN traffic (unsupervised: no labels).
 
