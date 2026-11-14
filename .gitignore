@@ -11,3 +11,5 @@ docs/
 /docker-compose.yml
 /services/broker/acl
 /services/broker/accounts.txt
+# Dataset bundles (released separately, never committed; see README v2-dataset)
+*.zip
