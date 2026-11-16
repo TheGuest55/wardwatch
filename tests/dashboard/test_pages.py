@@ -2,15 +2,9 @@
 from pathlib import Path
 
 import pytest
-from streamlit.testing.v1 import AppTest
+from helpers import run
 
 PAGES = sorted(str(p) for p in [Path("src/dashboard/app.py"), *Path("src/dashboard/pages").glob("*.py")])
-
-
-def run(page, root, monkeypatch):
-    monkeypatch.setenv("WARDWATCH_DATA_ROOT", str(root))
-    at = AppTest.from_file(page, default_timeout=60).run()
-    return at
 
 
 @pytest.mark.parametrize("page", PAGES)
