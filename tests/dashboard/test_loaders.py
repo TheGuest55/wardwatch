@@ -122,3 +122,18 @@ def test_dataset_summary_rows_per_class_and_split(tmp_path):
                   "attack_class": [None, "arp_mitm", None, "arp_mitm"]}).to_parquet(tmp_path / "testbed_windows.parquet")
     t = loaders.load_dataset_summary(tmp_path).data
     assert t.loc["arp_mitm", "train"] == 1 and t.loc["benign", "test"] == 1
+
+
+def test_derived_curves_and_confusions(preds_root):
+    from src.dashboard import derived
+    df = loaders.load_records(preds_root).data
+    rec = df[(df["run_name"] == "A_k12_h32_s0") & df["eligible"]].iloc[0]
+    pred = loaders.load_predictions(rec, preds_root).data
+    cm = derived.confusion_binary(pred)
+    assert cm.values.tolist() == [[2, 1], [1, 2]]
+    assert cm.loc["attack", "predicted attack"] == 2 and cm.loc["benign", "predicted attack"] == 1
+    assert derived.pr(pred).ok and derived.roc(pred).ok
+    mc = derived.confusion_multiclass(pred)
+    assert mc.ok and mc.data.values.sum() == 6
+    assert not derived.pr(pred.assign(y=0)).ok                      # one class only -> reason, not a crash
+    assert not derived.confusion_multiclass(pred.drop(columns=["p_benign", "p_arp_mitm"])).ok
