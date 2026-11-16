@@ -212,6 +212,43 @@ class TestSynthetic(unittest.TestCase):
         self.assertNotIn("syn_flood", seq.class_list("syn_flood"))
         self.assertTrue(t.y_class.max() <= 7)
 
+    def test_new_options_default_to_identical_output(self):
+        a = seq.build_sequences(self.df, _Ident(), FEATS, K)
+        b = seq.build_sequences(self.df, _Ident(), FEATS, K, classes=None, drop_classes=None)
+        c = seq.build_sequences(self.df, _Ident(), FEATS, K, drop_classes=set())
+        for o in (b, c):
+            for sp in seq.SPLITS:
+                np.testing.assert_array_equal(a[sp].X, o[sp].X)
+                np.testing.assert_array_equal(a[sp].y_class, o[sp].y_class)
+                pd.testing.assert_frame_equal(a[sp].meta, o[sp].meta)
+
+    def test_drop_classes_removes_every_context_window_of_those_classes_in_all_splits(self):
+        out = seq.build_sequences(self.df, _Ident(), FEATS, K, drop_classes={"syn_flood", "eavesdrop"})
+        bad = {float(code("a", "H1", i)) for i in (3, 7, 8)} | {float(code("a", "H3", 6))} \
+            | {float(code("b", "H1", 5))} | {float(code("c", "H1", 4)), float(code("c", "H1", 7))}
+        for sp in seq.SPLITS:
+            self.assertFalse(np.isin(out[sp].X[:, :, 0], list(bad)).any(), sp)
+            self.assertFalse(out[sp].meta.attack_class.isin(["syn_flood", "eavesdrop"]).any())
+        # test context now also loses sequences (unlike exclude_class); step 0 of test is kept
+        self.assertTrue((out["test"].meta.window_start_epoch == T0["c"]).any())
+        self.assertFalse((out["test"].meta.window_start_epoch == T0["c"] + 20).any())
+
+    def test_drop_classes_needs_exclusion_column(self):
+        with self.assertRaises(ValueError):
+            seq.build_sequences(self.df.drop(columns=["exclusion_class"]), _Ident(), FEATS, K,
+                                drop_classes={"syn_flood"})
+
+    def test_explicit_classes_set_the_output_units(self):
+        cl = ["benign", "syn_flood", "eavesdrop"]
+        out = seq.build_sequences(self.df, _Ident(), FEATS, K, classes=cl,
+                                  drop_classes={"bruteforce"})
+        for sp in seq.SPLITS:
+            s = out[sp]
+            self.assertTrue(s.y_class.min() >= 0 and s.y_class.max() <= 2)
+            names = np.array(cl)[s.y_class]
+            exp = np.where(s.meta.label == "attack", s.meta.attack_class, "benign")
+            np.testing.assert_array_equal(names, exp)
+
     def test_no_metadata_in_the_tensor(self):
         self.assertEqual(self.out["train"].X.shape[-1], len(FEATS) + 1)
         for c in seq.META_KEYS:

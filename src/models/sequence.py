@@ -124,16 +124,22 @@ def _coerce(values):
 
 
 def build_sequences(df, scaler, feature_names, k, use_presence=True, exclude_class=None,
-                    splits=SPLITS):
+                    splits=SPLITS, classes=None, drop_classes=None):
     """Return {split: SeqSet}. `df` must carry the session, host_mac, window_start_epoch, label,
     attack_class, split and feature columns (all rows, including victim/boundary).
 
     exclude_class=X (Experiment B): in train and val, every sequence containing ANY window with
     attack_class == X is dropped (whatever its label); in test, context is unchanged and the targets
-    are benign + X only. Withheld-class test targets get y_class = -1."""
+    are benign + X only. Withheld-class test targets get y_class = -1.
+
+    classes=None: explicit output class list (benign first), overriding class_list() (Experiment C: 5
+    units). drop_classes=None: a set of classes; in EVERY split any target whose k-window context
+    (target included) has a window whose exclusion_class (split on "|") intersects the set is dropped
+    (the Experiment-B rule extended to all splits and several classes). Both default to the old
+    behaviour."""
     feature_names = list(feature_names)
     nf = len(feature_names)
-    classes = class_list(exclude_class)
+    classes = list(classes) if classes is not None else class_list(exclude_class)
     cls_idx = {c: i for i, c in enumerate(classes)}
 
     key = ["session", "host_mac", "window_start_epoch"]
@@ -154,6 +160,12 @@ def build_sequences(df, scaler, feature_names, k, use_presence=True, exclude_cla
                              "boundary windows carry no attack_class")
         xcls = df["exclusion_class"].astype(object).where(df["exclusion_class"].notna(), "").to_numpy()
         in_x = np.array([exclude_class in str(v).split(SEP) for v in xcls], dtype=bool)
+    if drop_classes:
+        if "exclusion_class" not in df.columns:
+            raise ValueError("drop_classes needs the exclusion_class column")
+        dset = set(drop_classes)
+        xc = df["exclusion_class"].astype(object).where(df["exclusion_class"].notna(), "").to_numpy()
+        in_drop = np.array([bool(dset & set(str(v).split(SEP))) for v in xc], dtype=bool)
     bounds = df.groupby("session")["window_start_epoch"].agg(["min", "max"])
     off = np.arange(k)
 
@@ -176,6 +188,10 @@ def build_sequences(df, scaler, feature_names, k, use_presence=True, exclude_cla
             if exclude_class is not None:
                 hasx[k - 1 + gi] = in_x[pos]
 
+            hasd = None
+            if drop_classes:
+                hasd = np.zeros(T + k - 1, dtype=bool)
+                hasd[k - 1 + gi] = in_drop[pos]
             lab = label[pos]
             ac = aclass[pos]
             is_t = np.isin(lab, TARGET_LABELS)
@@ -187,6 +203,11 @@ def build_sequences(df, scaler, feature_names, k, use_presence=True, exclude_cla
             ti = gi[sel][:, None] + off[None, :]                # [n, k] indices into P, ending at target
             if exclude_class is not None and split != "test":
                 keep = ~hasx[ti].any(axis=1)
+                sel, ti = sel[keep], ti[keep]
+                if sel.size == 0:
+                    continue
+            if hasd is not None:
+                keep = ~hasd[ti].any(axis=1)
                 sel, ti = sel[keep], ti[keep]
                 if sel.size == 0:
                     continue
