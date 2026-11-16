@@ -153,3 +153,49 @@ def selection(head):
         winner = max(scores, key=scores.get) if not missing and scores else None
         out[role] = {"scores": scores, "missing": missing, "winner": winner}
     return out
+
+
+# ------------------------------------------------------------------ tables for the comparison page
+def a_by_config(df, view="all"):
+    """Experiment A, every configuration of every model (ablations included): mean ± std over seeds."""
+    sub = eligible(df, experiment="A")
+    rows = []
+    for (model, cfg), g in sub.groupby(["model", "config"]):
+        r = {"model": model, "config": cfg, "seeds": int(g["seed"].nunique())}
+        for key, name in {"f1": "F1", "pr_auc": "PR-AUC", "fpr_at_recall_90": "FPR @ 90% recall",
+                          "macro_f1": "macro-F1"}.items():
+            col = f"test_{view}_{key}"
+            r[name] = fmt(*mean_std(g[col])[:2]) if col in g else "not available"
+            r["_" + name] = mean_std(g[col])[0] if col in g else np.nan
+        rows.append(r)
+    return pd.DataFrame(rows)
+
+
+def b_per_class(df, view="all"):
+    """Rows = models, columns = held-out class; cells mean ± std of test F1 over seeds."""
+    sub = eligible(df, experiment="B")
+    col = f"test_{view}_f1"
+    if sub.empty or col not in sub:
+        return pd.DataFrame()
+    g = sub.groupby(["model", "held_out_class"])[col].agg(["mean", "std", "count"]).reset_index()
+    g["cell"] = [fmt(r["mean"], r["std"]) for _, r in g.iterrows()]
+    out = g.pivot(index="model", columns="held_out_class", values="cell")
+    return out.reindex(columns=[c for c in CLASSES if c in out.columns]).fillna("not available")
+
+
+def c_by_direction(df, view="all"):
+    sub = eligible(df, experiment="C")
+    col = f"tgt_test_{view}_f1"
+    if sub.empty or col not in sub:
+        return pd.DataFrame()
+    g = sub.groupby(["model", "threshold_mode", "direction"], dropna=False)[col].agg(["mean", "std", "count"])
+    g = g.reset_index()
+    g["F1 (target test)"] = [fmt(r["mean"], r["std"]) for _, r in g.iterrows()]
+    return g[["model", "threshold_mode", "direction", "count", "F1 (target test)"]]
+
+
+def provenance_table(df):
+    """Records behind a table: id, seed, commit, dirty flag, image digest, and whether it counted."""
+    cols = ["model", "experiment", "config", "held_out_class", "direction", "seed", "run_name", "git_commit",
+            "git_dirty", "image_digest", "eligible", "exclude_reason"]
+    return df[[c for c in cols if c in df.columns]].sort_values(["model", "experiment", "run_name"])
