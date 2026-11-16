@@ -100,9 +100,9 @@ def fit_source_scaler(domain):
     return StandardScaler().fit(domain.tree_ds.X("train"))
 
 
-def domain_sequences(domain, scaler, k, use_presence=True):
+def domain_sequences(domain, scaler, k, use_presence=True, splits=seq.SPLITS):
     return seq.build_sequences(domain.df, scaler, domain.feats, k, use_presence=use_presence,
-                               classes=C_CLASSES, drop_classes=NONSHARED[domain.name])
+                               classes=C_CLASSES, drop_classes=NONSHARED[domain.name], splits=splits)
 
 
 # ------------------------------------------------------------------------------------ diagnostics
