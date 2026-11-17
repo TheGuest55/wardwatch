@@ -42,6 +42,7 @@ from .. import common
 from . import data as mdata
 from . import metrics as mmetrics
 from . import tracking
+from .calibrator import Calibrator
 from .train_tree import DATASET, GRIDS, MODEL_DIR, SPLIT, V2, importances, multiclass_targets
 
 OUT_DIR = V2 / "runs" / "calibration"
@@ -109,32 +110,6 @@ FEATURE_TEXT = {
 def _logit(s):
     s = np.clip(np.asarray(s, dtype=float), EPS, 1 - EPS)
     return np.log(s / (1 - s))
-
-
-class Calibrator:
-    """Maps a raw classifier score to a calibrated attack probability. method: platt | isotonic."""
-
-    def __init__(self, method):
-        if method not in ("platt", "isotonic"):
-            raise ValueError(method)
-        self.method = method
-        self._m = None
-
-    def fit(self, score, y):
-        y = np.asarray(y).astype(int)
-        if self.method == "platt":
-            from sklearn.linear_model import LogisticRegression
-            self._m = LogisticRegression(C=1e6, max_iter=1000).fit(_logit(score)[:, None], y)
-        else:
-            from sklearn.isotonic import IsotonicRegression
-            self._m = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip").fit(
-                np.asarray(score, dtype=float), y)
-        return self
-
-    def predict(self, score):
-        if self.method == "platt":
-            return self._m.predict_proba(_logit(score)[:, None])[:, 1]
-        return self._m.predict(np.asarray(score, dtype=float))
 
 
 def ece(y, p, n_bins=15):
