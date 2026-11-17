@@ -5,9 +5,13 @@ Run in its OWN process on an idle machine (torch.set_num_threads(1)):
 
 score_one(raw_row) is the whole per-window work: take ONE unscaled feature row (values in
 feature_names order), scale it with the model's train-only scaler (inside the timed call), score it
-and apply the validation-chosen threshold. Rows are real test rows. Equivalence (asserted, 1e-6):
-score_one on raw rows equals the offline scores computed on the scaled matrix, over an evenly spaced
-subset of the test rows. One for_report record per model (experiment "A", tag latency) is written to
+and apply the validation-chosen threshold. Rows are real test rows. Equivalence (asserted): over an
+evenly spaced subset of the test rows, score_one on raw rows matches the offline batch scores within
+|d| <= 1e-6 * max(1, |score|), and no row changes its decision at the threshold. The tolerance scales
+with the score because the AE computes in float32: one float32 step (ULP) at a reconstruction error of
+128-256 is 2^-16 = 1.5e-5, and single-row vs batch arithmetic can differ by that much. Flood windows
+score in the hundreds, so a fixed 1e-6 fails on rounding alone (17 Nov 2026: 1.53e-5 at score 180.27,
+0 decision flips). One for_report record per model (experiment "A", tag latency) is written to
 runs/expA/latency_<model>.json.
 """
 import argparse
@@ -59,29 +63,42 @@ def load_scorer(name, model_dir):
 
 
 def check_equivalence(scorer, X_raw, n_equiv=2000, tol=EQUIV_TOL):
-    """score_one on raw rows vs the offline batch scores of the same rows. Returns (max_abs_diff, n)."""
+    """score_one on raw rows vs the offline batch scores of the same rows.
+
+    Passes when every |d| <= tol * max(1, |offline|) and no decision flips at the threshold.
+    Returns {"max_abs_diff", "max_scaled_diff" (max of |d| / max(1, |offline|)), "n", "decision_flips"}."""
     idx = np.unique(np.linspace(0, len(X_raw) - 1, min(n_equiv, len(X_raw))).astype(int))
     offline = scorer.score_raw(X_raw[idx])
     got = np.array([scorer.score_one(X_raw[i])[0] for i in idx])
-    mx = float(np.max(np.abs(got - offline)))
-    if not mx <= tol:
-        raise AssertionError(f"raw-path scores differ from the offline scores: max_abs_diff={mx} > {tol}")
-    return mx, int(len(idx))
+    d = np.abs(got - offline)
+    scaled = d / np.maximum(1.0, np.abs(offline))
+    flips = int(((got >= scorer.threshold) != (offline >= scorer.threshold)).sum())
+    out = {"max_abs_diff": float(d.max()), "max_scaled_diff": float(scaled.max()), "n": int(len(idx)),
+           "decision_flips": flips}
+    if not out["max_scaled_diff"] <= tol:
+        raise AssertionError(f"raw-path scores differ from the offline scores: max |d|/max(1,|s|)="
+                             f"{out['max_scaled_diff']} > {tol} (max_abs_diff={out['max_abs_diff']})")
+    if flips:
+        raise AssertionError(f"raw-path decisions differ from the offline decisions on {flips} rows")
+    return out
 
 
 def run(name, model_dir, X_raw, out_json=None, n_calls=500, n_equiv=2000, for_report=False,
         split_path=ta.SPLIT, dataset_path=ta.DATASET):
     torch.set_num_threads(1)
     scorer, _ = load_scorer(name, model_dir)
-    mx, n_cmp = check_equivalence(scorer, X_raw, n_equiv)
-    print(f"[{name}] equivalence OK on {n_cmp} rows, max_abs_diff={mx:.3g}", flush=True)
+    eq = check_equivalence(scorer, X_raw, n_equiv)
+    print(f"[{name}] equivalence OK on {eq['n']} rows, max_abs_diff={eq['max_abs_diff']:.3g}, "
+          f"max_scaled_diff={eq['max_scaled_diff']:.3g}, decision flips {eq['decision_flips']}", flush=True)
     rows = [X_raw[i] for i in range(min(len(X_raw), 500))]
     lat = mm.single_window_latency_ms(scorer.score_one, rows, n_calls=n_calls)
     print(f"[{name}] latency from raw input: median {lat['median_ms']:.3f} ms, p95 {lat['p95_ms']:.3f} ms "
           f"({lat['n']} calls, {torch.get_num_threads()} thread)", flush=True)
     metrics = {"median_ms": lat["median_ms"], "p95_ms": lat["p95_ms"], "n": lat["n"], "warmup": lat["warmup"],
-               "equivalence_max_abs_diff": mx, "equivalence_n_compared": n_cmp}
+               "equivalence_max_abs_diff": eq["max_abs_diff"], "equivalence_max_scaled_diff": eq["max_scaled_diff"],
+               "equivalence_decision_flips": eq["decision_flips"], "equivalence_n_compared": eq["n"]}
     tags = {"latency": True, "input": "raw (unscaled) row; scaler inside the timed call",
+            "equivalence_rule": f"|d| <= {EQUIV_TOL} * max(1, |score|) and 0 decision flips",
             "cpu": {"processor": platform.processor(), "machine": platform.machine(),
                     "platform": platform.platform(), "cpu_count": os.cpu_count(),
                     "torch": torch.__version__, "torch_threads": torch.get_num_threads()}}
