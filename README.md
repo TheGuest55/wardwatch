@@ -183,6 +183,23 @@ Steps A, B/C, 1 and 2 repeat with `--model random_forest`. Step D is the long on
 12-core laptop, XGBoost with 3 seeds takes ≈ 1.6 h (most of it on the 19-class task) and RF ≈ 25 min.
 The other steps take minutes.
 
+**Triage, real time and Experiment E (deployed pair: XGBoost + Isolation Forest)**
+
+Run after the Experiment A runs (XGBoost and the Isolation Forest seed-0 artefacts) and calibration (step 2); same container
+recipe as above (`--network none`, `data/raw` read-only, provenance env vars). One heavy job at a time.
+
+| # | Step | Command (after `RUN`) | Writes |
+|---|---|---|---|
+| T1 | Refit and save the multiclass XGBoost that names the type (asserts its macro-F1 equals the recorded seed-0 value) | `python -m src.models.save_multiclass` | `models/expA/xgboost_multiclass_seed0.{json,_classes.json}` |
+| T2 | Streaming window builder equals the stored session parquet exactly (all 51 features incl. the causal flow stats, no extra/missing rows, 0 late packets); writes the peer sidecars | `python -m src.realtime.check_session --session n02 r01 r02 r03 r04 r05 r06 r07` (`make check-session SESSIONS="..."`) | `triage/peers_<S>.parquet`, `triage/check_session.json` |
+| T3 | Offline triage: grouping key/gap chosen on val r04/r06, six-cell table, incidents with SHAP and hashed slices, grouping accuracy, time to detect, B withheld share, false-novel rate | `python -m src.triage.offline --for-report` (`make triage ARGS=--for-report`) | `triage/incidents_offline.jsonl`, `triage/slices/`, `runs/triage/triage_{A,B_withheld}.json`, `triage_summary.md` |
+| E | Experiment E: replay a held-out session through the pair at `--speed` (1 = real time), timer-closed 5 s windows, per-tick latency vs 50 ms | `python -m src.experiments.run_e --session r05 --speed 1 --for-report` (`make replay SESSION=r05 ARGS="--for-report"`) | `live/incidents.jsonl` (the dashboard shows this), `live/slices/`, `runs/expE/E_<S>.json` |
+
+The six verdicts are CLAUDE.md's; the two "Detectors disagree" cells share the string and carry a `cell` field
+(`review_anomaly_only`, `review_classifier_only`). `host_role` is display only: it never changes a verdict, attribution
+or grouping. **PCAP slices contain the lab's plaintext MQTT credentials**: they are written only under the gitignored
+`data/processed/v2/{triage,live}/slices/`; never commit, publish or share them.
+
 **Using the outputs in other modules**
 
 - *Triage / dashboard:* `from src.models.calibrate_explain import CalibratedDetector`, then
