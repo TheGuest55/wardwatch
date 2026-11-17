@@ -173,6 +173,9 @@ previous step's outputs under `data/processed/v2/`.
 | 1 | Random-split reference (proposal §3.4) | `python -m src.models.random_split --model xgboost --seeds 5 --save-predictions --for-report` | `runs/random_split/`, `runs/predictions/random_*.parquet` |
 | 2 | Calibration, confidence bands, SHAP | `python -m src.models.calibrate_explain --model xgboost --for-report` | `runs/calibration/`, `models/expA/*_calibrator.joblib`, `*_triage_config.json` |
 | 3 | Block-bootstrap 95% CIs | `python -m src.models.bootstrap_ci --export-a xgboost --export-a random_forest --pred A_xgboost --pred A_random_forest --pred random_xgboost --pred random_random_forest --tag xgb_rf_time_random --for-report` | `runs/bootstrap/`, `runs/predictions/A_*.parquet` |
+| C size check | Frame-size sensitivity: Experiment C as trained without the 7 frame-size features (not a selection input) | `python -m src.experiments.run_tree_report --model xgboost --experiment C --size-variant nosize --for-report` (same flag on `train_autoencoder --model isolation_forest` and `run_lstm_c`) | `runs/expC_nosize/`, `runs/lstm_c_nosize/` |
+| 2b | XGBoost single-window latency from raw input (scoring + calibration; SHAP separately), idle machine, `--cpus 1`; then the pair p95 from the records | `python -m src.experiments.tree_latency` then `python -m src.experiments.tree_latency --pair` | `runs/expA/latency_xgboost.json`, `latency_pair_xgboost_isolation_forest_summary.json` |
+| 3b | Block-bootstrap CIs for the selection rule (B, C, their mean; XGBoost−RF, XGBoost−LSTM, IF−AE) | `python -m src.models.bootstrap_selection --for-report` | `runs/bootstrap/selection.{json,md}`, `selection_details.json` |
 | 4 | Report figures (PNG 300 dpi + PDF) | `python -m src.models.figures` | `figures/` |
 | D | Benchmark on CICIoMT2024's own CSVs | `python -m src.models.exp_d --models xgboost random_forest --for-report` (leakage check: add `--drop IAT --seeds 1`) | `runs/expD/` |
 

@@ -4,6 +4,7 @@
     python -m src.experiments.run_tree_report --model random_forest --experiment B --for-report
     python -m src.experiments.run_tree_report --model xgboost --experiment C --for-report
     python -m src.experiments.run_tree_report --model xgboost --experiment A --summary   # rebuild the summary
+    python -m src.experiments.run_tree_report --model xgboost --experiment C --size-variant nosize --for-report
 
 Why this exists: src/models/train_tree.py writes ONE aggregated record per model and experiment, all rows
 only, without saved predictions or a DDoS guard on the CIC frame. The autoencoder, Isolation Forest and
@@ -34,6 +35,8 @@ Outputs (data/processed/v2/runs/exp{A,B,C}/):
   B: <model>_<class>_s{seed}.json, predictions/..., <model>_details.json.
   C: <model>_<tb2cic|cic2tb>_astrained_s{seed}.json, predictions/..., <model>_details.json.
   Each: <model>_summary.{md,json}; FLAG.md if a result reaches 0.98 F1 (working rule 3).
+  C --size-variant nosize (frame-size sensitivity, train_tree.SIZE_FEATURES dropped in both domains): same
+     protocol and names under runs/expC_nosize/, records tagged sensitivity=nosize; NOT selection-rule inputs.
 Threads: train_tree.N_JOBS (from ANALYSIS_CPUS) is recorded in every record's params.
 """
 import argparse
@@ -265,6 +268,7 @@ def run_c(name, env):
             rec = _record(env, "C", name, {**params, **_base_params(), "seed": seed, "threshold": thr,
                                            "direction": tag, "variant": "astrained", "source": src, "target": tgt,
                                            "n_features": len(ds_s.feature_names),
+                                           "size_variant": env.size_variant,
                                            "shared_classes": list(tt.SHARED_CLASSES)},
                           metrics, {"dataset": "v2+cic", "stage": "C", **tags}, seed)
             ta._write_preds(d / "predictions" / f"{name}_{tag}_astrained_s{seed}.parquet",
@@ -318,12 +322,18 @@ def main(argv=None):
                     help="refuse to write records unless provenance is complete (checked before training)")
     ap.add_argument("--no-mlflow", action="store_true")
     ap.add_argument("--summary", action="store_true", help="rebuild the summary from the per-seed records")
+    ap.add_argument("--size-variant", choices=["none", "nosize"], default="none",
+                    help="Experiment C only: frame-size sensitivity (nosize drops train_tree.SIZE_FEATURES); "
+                         "writes runs/expC_nosize/, records tagged sensitivity=nosize, not selection inputs")
     args = ap.parse_args(argv)
-    env = Env(for_report=args.for_report, no_mlflow=args.no_mlflow)
+    if args.size_variant != "none" and args.experiment != "C":
+        ap.error("--size-variant applies to Experiment C only")
+    env = Env(for_report=args.for_report, no_mlflow=args.no_mlflow, size_variant=args.size_variant)
     if args.summary:
         summary(env, args.experiment, args.model)
         return 0
-    print(f"[{args.model}] Experiment {args.experiment}, n_jobs={tt.N_JOBS}, seeds={env.seeds}", flush=True)
+    print(f"[{args.model}] Experiment {args.experiment}, n_jobs={tt.N_JOBS}, seeds={env.seeds}, "
+          f"size_variant={env.size_variant}", flush=True)
     {"A": run_a, "B": run_b, "C": run_c}[args.experiment](args.model, env)
     return 0
 

@@ -50,7 +50,7 @@ class Domain:
     fl_path: Path
 
 
-def load_domain(name, paths=None):
+def load_domain(name, paths=None, size_variant="none"):
     p = paths or default_paths()
     if name == "testbed":
         df = seq.load_sessions(p["sessions_dir"], p["split_path"])
@@ -64,13 +64,13 @@ def load_domain(name, paths=None):
         check_cic_files(df)
     else:
         raise ValueError(f"unknown domain {name!r}")
-    ds = tt._domain(windows, fl)
+    ds = tt._domain(windows, fl, size_variant=size_variant)          # nosize: SIZE_FEATURES dropped
     return Domain(name, df.reset_index(drop=True), list(ds.feature_names), ds, Path(windows), Path(fl))
 
 
-def load_pair(paths=None):
+def load_pair(paths=None, size_variant="none"):
     """Both domains, with the shared-feature lists asserted equal (same names, same order)."""
-    tb, cic = load_domain("testbed", paths), load_domain("cic", paths)
+    tb, cic = load_domain("testbed", paths, size_variant), load_domain("cic", paths, size_variant)
     if tb.feats != cic.feats:
         raise SystemExit(f"feature mismatch: {set(tb.feats) ^ set(cic.feats)} "
                          f"(or a different order)")

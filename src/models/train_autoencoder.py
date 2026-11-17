@@ -156,9 +156,12 @@ class Env:
     ae_cfg: dict = field(default_factory=dict)
     ae_grid: list = None
     if_grid: list = None
+    size_variant: str = "none"                  # Experiment C frame-size sensitivity (train_tree.SIZE_FEATURES)
 
     def exp_dir(self, exp):
-        d = Path(self.runs) / f"exp{exp}"
+        # a sensitivity variant never sits beside the reported records: runs/expC_<variant>/
+        sub = f"exp{exp}" if exp != "C" or self.size_variant == "none" else f"expC_{self.size_variant}"
+        d = Path(self.runs) / sub
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -343,9 +346,15 @@ def write_summary(env, exp, model_name):
         for k, v in S["by"].items():
             L.append(f"| {k} | " + " | ".join(f"{v[m][0]:.4f} ± {v[m][1]:.4f}" for m in _METRICS) + " |")
         if both:
+            has_refit = any(r["params"]["variant"] == "refit" for r in recs)
             L += ["", f"Selection score (as-trained F1, mean of both directions per seed, all rows): "
-                      f"{S['selection_score_astrained_f1'][0]:.4f} ± {S['selection_score_astrained_f1'][1]:.4f}. "
-                      "The refit variant is reported alongside and is NOT used for selection."]
+                      f"{S['selection_score_astrained_f1'][0]:.4f} ± {S['selection_score_astrained_f1'][1]:.4f}."
+                      + (" The refit variant is reported alongside and is NOT used for selection." if has_refit
+                         else " There is no threshold-refit variant for this model.")]
+        sens = sorted({(r.get("tags") or {}).get("sensitivity") for r in recs} - {None, "none"})
+        if sens:
+            S["sensitivity"] = sens
+            L += ["", f"SENSITIVITY records ({', '.join(sens)}): excluded from the selection rule."]
     (d / f"{model_name}_summary.json").write_text(json.dumps(S, indent=2, default=str))
     (d / f"{model_name}_summary.md").write_text("\n".join(L) + "\n")
     return S
@@ -559,7 +568,8 @@ def c_seed(env, model_name, params, doms, scalers, src, tgt, seed, tags, write=T
              "threshold_rule": "source-val-max-F1 (as trained)" if variant == "astrained" else
              "refit: (1 - fpr_src) quantile of target benign train+val sample scores",
              "shared_classes": list(SHARED_CLASSES), "n_features": len(ds_s.feature_names),
-             "trained_on": "benign-only", "scaler": "source train-only, never refit on the target"}
+             "trained_on": "benign-only", "scaler": "source train-only, never refit on the target",
+             "size_variant": getattr(env, "size_variant", "none")}
         if variant == "refit":
             p.update({"n_refit": n_refit, "fpr_src": fpr_src, "thr_refit": thr_refit})
         rec = _record(env, "C", model_name, p, metrics, {"dataset": "v2+cic", "stage": "C", **tags}, seed)
@@ -584,14 +594,18 @@ def load_c_domains(env):
             f"Run `python -m src.features.extract_cic` on the CIC PCAPs first. Experiment C deferred -- "
             f"NOT run (CLAUDE.md: never fake a result).")
     cic_fl = Path(env.cic_dir) / "feature_list.json"
-    tb = tt._domain(env.dataset, env.fl)
-    cic = tt._domain(cic_parquet, cic_fl)
+    sv = getattr(env, "size_variant", "none")
+    tb = tt._domain(env.dataset, env.fl, size_variant=sv)
+    cic = tt._domain(cic_parquet, cic_fl, size_variant=sv)
     if tb.feature_names != cic.feature_names:
         raise SystemExit(f"feature mismatch: {set(tb.feature_names) ^ set(cic.feature_names)} "
                          f"(or a different order)")
     stems = sc.check_cic_files(pd.read_parquet(cic_parquet, columns=["run_id", "split"]))
     tags = {"cic_files": stems, "cic_windows_sha256": _sha(cic_parquet), "cic_feature_list_sha256": _sha(cic_fl),
             "cic_extract_report_sha256": _sha(Path(env.cic_dir) / "extract_report.json")}
+    if sv != "none":
+        dropped = [f for f in tt.SIZE_FEATURES if f not in tb.feature_names]
+        tags.update({"sensitivity": sv, "size_variant": sv, "dropped_features": dropped})
     return {"testbed": tb, "cic": cic}, tags
 
 
@@ -627,8 +641,13 @@ def main(argv=None):
                     help="refuse to write records unless provenance is complete (checked before training)")
     ap.add_argument("--no-mlflow", action="store_true")
     ap.add_argument("--summary", action="store_true", help="rebuild the summary from the per-seed records")
+    ap.add_argument("--size-variant", choices=["none", "nosize"], default="none",
+                    help="Experiment C only: frame-size sensitivity (nosize drops train_tree.SIZE_FEATURES); "
+                         "records go to runs/expC_nosize/, are tagged sensitivity=nosize and are NOT selection inputs")
     args = ap.parse_args(argv)
-    env = Env(for_report=args.for_report, no_mlflow=args.no_mlflow)
+    if args.size_variant != "none" and args.experiment != "C":
+        ap.error("--size-variant applies to Experiment C only")
+    env = Env(for_report=args.for_report, no_mlflow=args.no_mlflow, size_variant=args.size_variant)
     if args.summary:
         write_summary(env, args.experiment, args.model)
         return 0
