@@ -3,6 +3,7 @@
   python -m src.experiments.run_lstm_c --check      # no training: rows/sequences per domain, split, class
   python -m src.experiments.run_lstm_c --smoke      # 1 seed, 1 epoch, both directions -> runs/lstm_c/smoke/
   python -m src.experiments.run_lstm_c --threads 1  # 10 runs: seeds 0..4 x {tb2cic, cic2tb}, resumable
+  python -m src.experiments.run_lstm_c --threads 1 --size-variant nosize   # frame-size sensitivity
 
 Config: k and hidden come from runs/lstm/selected_config.json and must be k=12, hidden=32 (is_present
 on); everything else is lstm.make_cfg's default. Each run: fit the SOURCE train-only scaler, build the
@@ -16,6 +17,9 @@ host_role == attacker excluded (the CIC attacker is role "attacker" in EVERY fil
 Rule 3: cross-domain F1 >= 0.98 on either view appends the top-10 permutation features to FLAG.md.
 Outputs: data/processed/v2/runs/lstm_c/{<run>.json, predictions/, curves/, summary.md/.csv}, artefacts in
 data/processed/v2/models/lstm_c/ (each holds the SOURCE scaler).
+--size-variant nosize drops train_tree.SIZE_FEATURES (7 frame-size features) in both domains and writes to
+runs/lstm_c_nosize/ and models/lstm_c_nosize/; records are tagged sensitivity=nosize and are NOT inputs to the
+selection rule.
 """
 import argparse
 import json
@@ -34,6 +38,7 @@ from ..models import lstm
 from ..models import sequence as seq
 from ..models import sequence_c as sc
 from ..models import tracking
+from ..models import train_tree as tt
 from . import run_lstm as rl
 
 V2 = common.PROCESSED_DIR / "v2"
@@ -67,6 +72,7 @@ class Ctx:
     hashes: dict
     smoke: bool = False
     epochs: int = None
+    size_variant: str = "none"
     scalers: dict = field(default_factory=dict)
     cache: dict = field(default_factory=dict)
 
@@ -90,9 +96,10 @@ def load_selected(path=SELECTED):
     return sel["k"], sel["hidden"]
 
 
-def make_ctx(paths, threads, runs_dir, models_dir, smoke=False, epochs=None, selected=SELECTED):
+def make_ctx(paths, threads, runs_dir, models_dir, smoke=False, epochs=None, selected=SELECTED,
+             size_variant="none"):
     k, h = load_selected(selected)
-    doms = sc.load_pair(paths)
+    doms = sc.load_pair(paths, size_variant)
     split_map = json.loads(Path(paths["split_path"]).read_text())
     hashes = {"session_parquet_sha256": {s: rl.sha256_file(Path(paths["sessions_dir"]) / f"{s}.parquet")
                                          for ss in split_map.values() for s in ss},
@@ -105,7 +112,10 @@ def make_ctx(paths, threads, runs_dir, models_dir, smoke=False, epochs=None, sel
     runs_dir, models_dir = Path(runs_dir), Path(models_dir)
     for d in (runs_dir, models_dir):
         d.mkdir(parents=True, exist_ok=True)
-    return Ctx(paths, doms, k, h, threads, runs_dir, models_dir, hashes, smoke, epochs)
+    if size_variant != "none":
+        hashes.update({"sensitivity": size_variant, "size_variant": size_variant,
+                       "dropped_features": [f for f in tt.SIZE_FEATURES if f not in doms["testbed"].feats]})
+    return Ctx(paths, doms, k, h, threads, runs_dir, models_dir, hashes, smoke, epochs, size_variant=size_variant)
 
 
 def preflight(paths):
@@ -187,7 +197,7 @@ def run_one(ctx, src, tgt, tag, seed):
               "dropout": cfg["dropout"], "lr": cfg["lr"], "weight_decay": cfg["weight_decay"],
               "noise_sigma": cfg["noise_sigma"], "batch_size": cfg["batch_size"],
               "max_epochs": cfg["epochs"], "patience": cfg["patience"], "threads": ctx.threads,
-              "n_classes": len(sc.C_CLASSES), "classes": list(sc.C_CLASSES)}
+              "n_classes": len(sc.C_CLASSES), "classes": list(sc.C_CLASSES), "size_variant": ctx.size_variant}
     counts = {src: {sp: int(len(src_sets[sp].y_class)) for sp in seq.SPLITS}, tgt: {"test": int(len(te_t.y_class))}}
     tags = {"run_name": name, "stage": "C", **ctx.hashes, "sequence_counts": counts,
             "padded_context_share": padded, "row_table_source": rows,
@@ -315,9 +325,14 @@ def selection_scores(df, key="tgt_test_all_f1"):
 def write_summary(runs_dir):
     runs_dir = Path(runs_dir)
     df, recs = load_c_records(runs_dir)
+    n_feat = sorted({r["params"]["n_features"] for r in recs.values()}) or [48]
+    sens = sorted({(r.get("tags") or {}).get("sensitivity") for r in recs.values()} - {None, "none"})
     L = ["# LSTM Experiment C summary", "",
-         f"Frozen config k={FROZEN_K} hidden={FROZEN_H}, 48 shared features + is_present, 5 output classes. "
+         f"Frozen config k={FROZEN_K} hidden={FROZEN_H}, {'/'.join(map(str, n_feat))} shared features + is_present, "
+         "5 output classes. "
          "Threshold from SOURCE validation (as trained); the target is scored with the SOURCE scaler.", ""]
+    if sens:
+        L += [f"SENSITIVITY records ({', '.join(sens)}): excluded from the selection rule.", ""]
     if (runs_dir / "FLAG.md").exists():
         L += ["**FLAG.md present (cross-domain F1 >= 0.98):**", "", (runs_dir / "FLAG.md").read_text(), ""]
     if df.empty:
@@ -404,7 +419,11 @@ def main(argv=None):
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--cic-dir", default=str(sc.CIC_DIR))
+    ap.add_argument("--size-variant", choices=["none", "nosize"], default="none",
+                    help="nosize drops train_tree.SIZE_FEATURES; writes runs/lstm_c_nosize/ (sensitivity, not selection)")
     args = ap.parse_args(argv)
+    runs = RUNS if args.size_variant == "none" else RUNS.parent / f"lstm_c_{args.size_variant}"
+    models = MODELS if args.size_variant == "none" else MODELS.parent / f"lstm_c_{args.size_variant}"
     os.chdir(common.ROOT)
     paths = sc.default_paths(args.cic_dir)
     if args.check:
@@ -415,18 +434,19 @@ def main(argv=None):
     if args.smoke:
         run_smoke(paths, args.threads)
         return 0
-    if (RUNS / "STOP.md").exists():
+    if (runs / "STOP.md").exists():
         log("STOP.md exists from an earlier run: resolve it (delete the file) before relaunching")
         return 3
-    ctx = make_ctx(paths, args.threads, RUNS, MODELS)
+    ctx = make_ctx(paths, args.threads, runs, models, size_variant=args.size_variant)
+    log(f"size_variant={args.size_variant}: {len(ctx.doms['testbed'].feats)} shared features -> {runs}")
     try:
         status = run_all(ctx)
     except StopRun as e:
-        (RUNS / "STOP.md").write_text(f"# STOP\n\n{e}\n")
+        (runs / "STOP.md").write_text(f"# STOP\n\n{e}\n")
         log(f"STOP: {e}")
-        write_summary(RUNS)
+        write_summary(runs)
         return 3
-    write_summary(RUNS)
+    write_summary(runs)
     return 0 if "failed" not in status.values() else 3
 
 
