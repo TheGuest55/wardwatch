@@ -157,3 +157,39 @@ class TestAgainstStoredSession(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCheckSessionReport(unittest.TestCase):
+    def test_report_carries_provenance_and_parquet_hashes(self):
+        import json
+        import os
+        import tempfile
+        from pathlib import Path
+        env = {"WARDWATCH_GIT_COMMIT": "a" * 40, "WARDWATCH_GIT_DIRTY": "", "WARDWATCH_IMAGE_DIGEST": "sha256:" + "b" * 64}
+        old = {k: os.environ.get(k) for k in env}
+        os.environ.update(env)
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                out = Path(d) / "check_session.json"
+                doc = cs.write_report([{"session": "x", "exact": True, "parquet_sha256": "c" * 64},
+                                       {"session": "y", "exact": True, "parquet_sha256": "d" * 64}], out)
+                got = json.loads(out.read_text())
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        p = got["provenance"]
+        self.assertEqual(p["git_commit"], "a" * 40)
+        self.assertIs(p["git_dirty"], False)
+        self.assertEqual(p["image_digest"], "sha256:" + "b" * 64)
+        self.assertRegex(p["utc"], r"^\d{4}-\d\d-\d\dT")
+        self.assertEqual(p["parquet_sha256"], {"x": "c" * 64, "y": "d" * 64})
+        self.assertTrue(got["all_exact"])
+
+    def test_check_result_has_the_real_parquet_hash(self):
+        import hashlib
+        h = hashlib.sha256((cs.V2 / "sessions" / "r05.parquet").read_bytes()).hexdigest()
+        from src.models import tracking
+        self.assertEqual(tracking._sha256_file(cs.V2 / "sessions" / "r05.parquet"), h)

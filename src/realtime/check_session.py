@@ -29,6 +29,7 @@ import pandas as pd
 from .. import common
 from ..features import windows
 from ..labels import label as labelling
+from ..models import tracking
 from . import stream
 
 V2 = common.PROCESSED_DIR / "v2"
@@ -106,12 +107,28 @@ def check(session, write=True, parquet_dir=V2 / "sessions", peers_dir=PEER_DIR):
     probs = compare(rows, ref)
     if wb.late_packets:
         probs.append(f"{wb.late_packets} late packets (windows {sorted(wb.late_windows)[:5]})")
-    res = {"session": session, "n_rows": len(rows), "n_ref_rows": len(ref), "n_packets": wb.n_packets,
+    res = {"session": session, "parquet_sha256": tracking._sha256_file(Path(parquet_dir) / f"{session}.parquet"),
+           "n_rows": len(rows), "n_ref_rows": len(ref), "n_packets": wb.n_packets,
            "late_packets": wb.late_packets, "exact": not probs, "problems": probs,
            "seconds": round(time.perf_counter() - t0, 1)}
     if not probs and write:
         res["peers"] = str(write_peers(session, rows, peers_dir))
     return res
+
+
+def write_report(results, out):
+    """check_session.json: the evidence for the equivalence claim, with provenance (git commit + dirty flag and image
+    digest from the WARDWATCH_* env, UTC time, each session parquet's sha256). Lives in triage/, not runs/, so the
+    dashboard does not mistake it for a model record."""
+    prov = tracking.run_provenance(seed=None, split_path=None, dataset_path=None)
+    doc = {"provenance": {"git_commit": prov["git_commit"], "git_dirty": prov["git_dirty"],
+                          "image_digest": prov["image_digest"],
+                          "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                          "parquet_sha256": {r["session"]: r.get("parquet_sha256") for r in results}},
+           "all_exact": all(r["exact"] for r in results), "results": results}
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_text(json.dumps(doc, indent=2, default=str))
+    return doc
 
 
 def main(argv=None):
@@ -125,11 +142,9 @@ def main(argv=None):
         results.append(r)
         print(json.dumps(r, indent=2, default=str), flush=True)
         if not r["exact"]:
-            Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-            Path(args.out).write_text(json.dumps(results, indent=2, default=str))
+            write_report(results, args.out)
             raise SystemExit(f"[check_session] {s}: streamed rows differ from the stored parquet: {r['problems']}")
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text(json.dumps(results, indent=2, default=str))
+    write_report(results, args.out)
     print(f"[check_session] {len(results)} session(s) exactly equal to the stored parquet, 0 late packets")
 
 
