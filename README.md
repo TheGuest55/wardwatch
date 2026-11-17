@@ -169,6 +169,7 @@ previous step's outputs under `data/processed/v2/`.
 |---|---|---|---|
 | A | Experiment A (time split) + seed-0 models | `python -m src.models.train_tree --model xgboost --for-report` (and `--model random_forest`) | `runs/expA/`, `models/expA/` |
 | B / C | Leave-one-attack-out / cross-dataset | `python -m src.models.train_tree --model xgboost --experiment B` (or `C`) | `runs/expB/`, `runs/expC/` |
+| A–C report | Per-seed report records (both views: all rows / attacker excluded), saved predictions, DDoS guard; same protocol as `train_tree` | `python -m src.experiments.run_tree_report --model xgboost --experiment A --for-report` (then `B`, `C`; repeat for `random_forest`) | `runs/exp{A,B,C}/<model>_*_s<seed>.json`, `predictions/`, `<model>_summary.md` |
 | 1 | Random-split reference (proposal §3.4) | `python -m src.models.random_split --model xgboost --seeds 5 --save-predictions --for-report` | `runs/random_split/`, `runs/predictions/random_*.parquet` |
 | 2 | Calibration, confidence bands, SHAP | `python -m src.models.calibrate_explain --model xgboost --for-report` | `runs/calibration/`, `models/expA/*_calibrator.joblib`, `*_triage_config.json` |
 | 3 | Block-bootstrap 95% CIs | `python -m src.models.bootstrap_ci --export-a xgboost --export-a random_forest --pred A_xgboost --pred A_random_forest --pred random_xgboost --pred random_random_forest --tag xgb_rf_time_random --for-report` | `runs/bootstrap/`, `runs/predictions/A_*.parquet` |
