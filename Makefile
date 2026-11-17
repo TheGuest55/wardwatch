@@ -1,4 +1,4 @@
-.PHONY: gen up down smoke session sessions features dataset datacheck test logs clean
+.PHONY: gen up down smoke session sessions features dataset datacheck test logs clean cic
 
 # Regenerate docker-compose.yml, broker ACLs/accounts and .env from config/ward.json.
 gen:
@@ -46,6 +46,11 @@ datacheck:
 # Regression tests: generation (host, stdlib) + pipeline (analysis image). make test [TIER=generation]
 test:
 	bash scripts/run_tests.sh "$(or $(TIER),all)"
+
+# CICIoMT2024 windows for Experiment C: the 19 single-attacker (DoS) PCAPs only, DDoS excluded.
+# Dry run (check and list the staged files, extract nothing): bash scripts/extract_cic_dos.sh --list
+cic:
+	bash scripts/extract_cic_dos.sh
 
 # Removes containers and locally built images. Never deletes data/.
 clean:
