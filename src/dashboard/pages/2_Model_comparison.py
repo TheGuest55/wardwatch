@@ -9,8 +9,9 @@ if df is None:
     ui.na(reason, "run records")
     st.stop()
 
-tab_a, tab_b, tab_c, tab_ci = st.tabs(["Experiment A", "Experiment B (leave one attack out)",
-                                       "Experiment C (cross-dataset)", "Bootstrap CIs"])
+tab_a, tab_b, tab_c, tab_s, tab_ci = st.tabs(["Experiment A", "Experiment B (leave one attack out)",
+                                              "Experiment C (cross-dataset)", "Frame-size sensitivity",
+                                              "Bootstrap CIs"])
 
 with tab_a:
     t = mv.a_by_config(df, view)
@@ -44,6 +45,16 @@ with tab_c:
     else:
         st.dataframe(t, use_container_width=True, hide_index=True)
     ui.provenance(df)
+
+with tab_s:
+    t = mv.c_sensitivity(df, view)
+    st.caption("Sensitivity analysis, NOT a selection input: Experiment C as trained (mean of both directions) with and without "
+               "the seven frame-size features. These records are excluded from every headline table.")
+    if t.empty:
+        ui.na("no frame-size sensitivity records", "frame-size sensitivity")
+    else:
+        st.dataframe(t, use_container_width=True, hide_index=True)
+    ui.provenance(df, label="Provenance: records behind the other tabs (sensitivity records appear as excluded)")
 
 with tab_ci:
     b = loaders.load_bootstrap(root)

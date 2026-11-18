@@ -194,6 +194,34 @@ def c_by_direction(df, view="all"):
     return g[["model", "threshold_mode", "direction", "count", "F1 (target test)"]]
 
 
+def c_sensitivity(df, view="all"):
+    """Frame-size sensitivity: Experiment C as-trained F1 (mean of both directions, over seeds) with and without the
+    seven frame-size features, per model. The 'without' records are tagged sensitivity and are NOT headline-eligible;
+    this is the only place they are shown. Each cell is a logged mean over records (nothing recomputed)."""
+    if df is None or "sensitivity" not in df:
+        return pd.DataFrame()
+    col = f"tgt_test_{view}_f1"
+    sens = df[(df["experiment"] == "C") & (df["sensitivity"] == "nosize") & df["for_report"]
+              & df["seed"].notna() & (df["kind"] == "metrics")]
+    if "threshold_mode" in sens:
+        sens = sens[sens["threshold_mode"].fillna("as_trained") == "as_trained"]
+    if sens.empty or col not in sens:
+        return pd.DataFrame()
+    rows = []
+    for model, g in sens.groupby("model"):
+        per = g.groupby("direction")[col].mean()
+        if not {"tb2cic", "cic2tb"} <= set(per.index):
+            continue
+        no = float(per.mean())
+        with_ = experiment_c(df, model, view)
+        w = with_["score"] if with_ and with_["both_directions"] else np.nan
+        rows.append({"model": model, "seeds": int(g["seed"].nunique()),
+                     "C F1 with size features (headline)": "not available" if np.isnan(w) else f"{w:.3f}",
+                     "C F1 without size features": f"{no:.3f}",
+                     "difference": "not available" if np.isnan(w) else f"{no - w:+.3f}"})
+    return pd.DataFrame(rows)
+
+
 def provenance_table(df):
     """Records behind a table: id, seed, commit, dirty flag, image digest, and whether it counted."""
     cols = ["model", "experiment", "config", "held_out_class", "direction", "seed", "run_name", "git_commit",

@@ -9,7 +9,8 @@ r = loaders.load_incidents(root)
 FORMAT = """One JSON object per line in `live/incidents.jsonl`:
 `incident_id`, `target_host`, `source`, `first_seen`, `last_seen`, `verdict` (one of the six below),
 `top_features` [{feature, text, delta}], `pcap_slice`, `pcap_sha256`, `n_alerts`;
-optional: `attack_class` (ground truth, for the verdict table), `calibrated_p`, `timeline` [{t, event}]."""
+optional: `session`, `cell` (keeps the two "Detectors disagree" cells apart), `scope`, `attack_class` (the NAMED type, Known
+attack only), `calibrated_p`, `timeline` [{t, event}]."""
 if not r.ok:
     ui.na(r.reason, "incidents")
     with st.expander("Expected incident format"):
@@ -19,17 +20,24 @@ if not r.ok:
     st.stop()
 
 inc = r.data
-if inc.attrs.get("bad_lines"):
-    st.warning(f"{inc.attrs['bad_lines']} line(s) in incidents.jsonl could not be read and were skipped.")
+sessions = ["All"] + (sorted(inc["session"].dropna().astype(str).unique()) if "session" in inc else [])
+sel = st.selectbox("Session", sessions, help="Replayed held-out session; All shows every incident.")
+if sel != "All":
+    inc = inc[inc["session"].astype(str) == sel].reset_index(drop=True)
+if inc.empty:
+    ui.na(f"no incidents for session {sel}")
+    st.stop()
+if r.data.attrs.get("bad_lines"):
+    st.warning(f"{r.data.attrs['bad_lines']} line(s) in incidents.jsonl could not be read and were skipped.")
 st.subheader("Verdicts")
 counts, cross = incidents.verdict_counts(inc)
 st.dataframe(counts.to_frame(), use_container_width=True)
 if cross is not None:
-    st.caption("Incidents per true attack class and verdict (where ground truth is attached).")
+    st.caption("Incidents per NAMED attack class (Known attack only; the model's name, not ground truth) and verdict.")
     st.dataframe(cross, use_container_width=True)
 
 st.subheader("Incident list")
-cols = [c for c in ("incident_id", "verdict", "target_host", "source", "first_seen", "last_seen", "n_alerts")
+cols = [c for c in ("incident_id", "session", "verdict", "cell", "target_host", "source", "first_seen", "last_seen", "n_alerts")
         if c in inc]
 st.dataframe(inc[cols], use_container_width=True, hide_index=True)
 

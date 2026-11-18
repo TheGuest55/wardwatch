@@ -35,8 +35,8 @@ def provenance(df, label="Provenance: records behind this page", only=None):
         return
     d = df if only is None else df[df["model"].isin(only)]
     with st.expander(label):
-        st.caption("`eligible` = counted in headline tables (for_report, not smoke, not a latency timing, "
-                   "has a seed). Excluded records are listed with the reason.")
+        st.caption("`eligible` = counted in headline tables (for_report, an A/B/C/D experiment, not smoke, "
+                   "not a sensitivity analysis, not a latency timing, has a seed). Excluded records are listed with the reason.")
         st.dataframe(mv.provenance_table(d), use_container_width=True, hide_index=True)
         for p in df.attrs.get("problems", []):
             st.warning(p)

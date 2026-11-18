@@ -3,8 +3,11 @@
 
 Record discovery is layout-agnostic (the models write to different places): any *.json under a runs
 directory that has `experiment`, `model` and a `metrics` dict is a run record. Headline membership is
-decided by the record's `for_report` flag, plus three explicit exclusions that the flag alone does not
-cover (all listed on the page's provenance expander):
+decided by the record's `for_report` flag, a WHITELIST of experiments (A, B, C, D: the model comparison;
+triage, E, calibration and bootstrap records are not model experiments and have their own pages), and
+explicit exclusions that the flag alone does not cover (all listed on the page's provenance expander):
+  * sensitivity analyses - a record tagged `sensitivity` (e.g. Experiment C without the frame-size
+                  features) is not a selection input; it appears only in the frame-size sensitivity table.
   * smoke runs  - `for_report=True` is set on them by the smoke harness, so they sit in a `smoke/`
                   directory or carry a `smoke_` run name; they are never results.
   * latency runs - a record tagged `latency` is one timing measurement, not a seed of an experiment.
@@ -74,12 +77,23 @@ def _threshold_mode(rec):
     return "as_trained" if rule else None
 
 
+HEADLINE_EXPERIMENTS = ("A", "B", "C", "D")
+R_NOT_MODEL = "not a model experiment (shown on Triage / E)"
+R_SENSITIVITY = "sensitivity analysis (not a selection input)"
+
+
 def _exclusion(rec, rel_parts, run_name):
+    """Why a record is not headline-eligible, or None. Order matters: a latency timing of an experiment
+    that is not a model experiment (E's tick latencies) is reported as 'not a model experiment'."""
     tags = rec.get("tags") or {}
     if not rec.get("for_report"):
         return "not for_report"
     if "smoke" in rel_parts[:-1] or str(run_name).startswith("smoke"):
         return "smoke run"
+    if str(rec.get("experiment")) not in HEADLINE_EXPERIMENTS:
+        return R_NOT_MODEL
+    if tags.get("sensitivity"):
+        return R_SENSITIVITY
     if tags.get("latency"):
         return "latency measurement"
     if (rec.get("provenance") or {}).get("seed") is None:
@@ -110,7 +124,8 @@ def load_records(root=None):
             row = {
                 "model": rec["model"], "role": rec.get("role") or ROLE_OF.get(rec["model"]),
                 "experiment": str(rec["experiment"]),
-                "kind": "latency" if tags.get("latency") else "metrics",
+                "kind": "latency" if tags.get("latency") is True else "metrics",
+                "sensitivity": tags.get("sensitivity"),
                 "config": _config_label(rec), "held_out_class": params.get("held_out_class"),
                 "direction": params.get("direction"), "threshold_mode": _threshold_mode(rec),
                 "seed": prov.get("seed"), "run_name": run_name, "for_report": bool(rec.get("for_report")),
