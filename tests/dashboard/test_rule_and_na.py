@@ -174,3 +174,64 @@ class TestRuleBaselineInViews:
             assert not at.exception, (page, [e.value for e in at.exception])
         text = " ".join(str(d.value.to_dict()) for d in at.dataframe)
         assert "rule_baseline" in text and "not applicable" in text
+
+
+class TestMulticlassConfusionFromTheSeed0File:
+    def _xgb(self, root):
+        write(root, "expA/xgboost_s0.json", record("xgboost", "A", 0, 0.89, {"max_depth": 4}, {}))
+        n = 6
+        d = root / "runs" / "expA" / "predictions"
+        d.mkdir(parents=True, exist_ok=True)
+        base = {"split": "test", "session": "r05", "host_mac": "m", "window_start_epoch": range(n),
+                "host_role": ["monitor", "monitor", "monitor", "attacker", "monitor", "monitor"], "run_id": None,
+                "attack_class": [None, None, "syn_flood", "syn_flood", "arp_mitm", None],
+                "label": ["benign", "benign", "attack", "attack", "attack", "benign"], "y_bin": [0, 0, 1, 1, 1, 0]}
+        pd.DataFrame({**base, "score": [.1, .2, .9, .8, .7, .1], "pred": [0, 0, 1, 1, 1, 0]}).to_parquet(d / "xgboost_s0.parquet")
+        return d, base
+
+    def _page(self, root, monkeypatch):
+        at = run("src/dashboard/pages/3_Curves_and_confusion.py", root, monkeypatch)
+        at.selectbox[1].select("xgboost").run()
+        assert not at.exception, [e.value for e in at.exception]
+        return at
+
+    def test_file_present_shows_the_matrix_with_the_derived_caption(self, root, monkeypatch):
+        d, base = self._xgb(root)
+        pb = [.9, .8, .05, .1, .1, .7]
+        pd.DataFrame({**base, "p_benign": pb, "p_syn_flood": [.05, .1, .9, .8, .1, .2], "p_arp_mitm": [.05, .1, .05, .1, .8, .1],
+                      "score": [1 - x for x in pb], "pred": [0, 0, 1, 1, 1, 0]}).to_parquet(d / "xgboost_multiclass_s0.parquet")
+        at = self._page(root, monkeypatch)
+        caps = " ".join(c.value for c in at.caption)
+        assert "Derived, seed 0 only" in caps
+        assert not any("multiclass confusion: not available" in i.value for i in at.info)
+        assert len(at.get("plotly_chart")) >= 3                          # PR, ROC, binary confusion, multiclass
+
+    def test_attacker_excluded_view_drops_attacker_rows_from_the_matrix(self, root, monkeypatch):
+        d, base = self._xgb(root)
+        pb = [.9, .8, .05, .1, .1, .7]
+        pd.DataFrame({**base, "p_benign": pb, "p_syn_flood": [.05, .1, .9, .8, .1, .2], "p_arp_mitm": [.05, .1, .05, .1, .8, .1],
+                      "score": [1 - x for x in pb], "pred": [0, 0, 1, 1, 1, 0]}).to_parquet(d / "xgboost_multiclass_s0.parquet")
+        mp = loaders.load_multiclass_predictions("xgboost", root).data
+        assert len(mp) == 6 and "p_syn_flood" in mp and loaders.drop_attacker(mp).data.shape[0] == 5
+
+    def test_missing_file_says_not_available(self, root, monkeypatch):
+        self._xgb(root)
+        at = self._page(root, monkeypatch)
+        assert any("multiclass confusion: not available" in i.value for i in at.info)
+        assert not loaders.load_multiclass_predictions("xgboost", root).ok
+
+    def test_xgboost_calibration_is_shown_when_logged_and_only_the_missing_say_not_available(self, root, monkeypatch):
+        import json
+        bins = [{"lo": 0.0, "hi": 1.0, "n": 10, "mean_predicted": 0.2, "observed_attack_rate": 0.1}]
+        d = root / "runs" / "calibration"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "xgboost_details.json").write_text(json.dumps({
+            "calibration_method": "isotonic", "reliability_test_raw": {"ece": 0.0176, "bins": bins},
+            "reliability_test_calibrated": {"ece": 0.0013, "bins": bins}}))
+        at = run("src/dashboard/pages/4_Calibration.py", root, monkeypatch)
+        assert not at.exception, [e.value for e in at.exception]
+        vals = {m.label: m.value for m in at.metric}
+        assert vals == {"Method": "isotonic", "ECE raw": "0.0176", "ECE calibrated": "0.0013"}
+        info = [i.value for i in at.info]
+        assert sum(i.startswith("calibration: not available") for i in info) == 2        # random_forest, lstm
+        assert sum("calibration: not applicable" in i for i in info) == 3                # autoencoder, IF, rule baseline

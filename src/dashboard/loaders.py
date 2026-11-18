@@ -238,6 +238,27 @@ def load_predictions(rec, root=None, split="test"):
     return Loaded(None, "no predictions file for this run")
 
 
+def load_multiclass_predictions(model, root=None):
+    """runs/expA/predictions/<model>_multiclass_s0.parquet (derived from the saved seed-0 multiclass model; only
+    XGBoost has one). Same normalised frame as load_predictions, with the p_<class> columns."""
+    root = Path(root) if root is not None else config.data_root()
+    p = root / "runs" / "expA" / "predictions" / f"{model}_multiclass_s0.parquet"
+    if not p.exists():
+        return Loaded(None, f"no multiclass predictions for {model} (runs/expA/predictions/{p.name} not found)")
+    try:
+        df = pd.read_parquet(p)
+    except Exception as exc:
+        return Loaded(None, f"multiclass predictions unreadable ({p.name}): {type(exc).__name__}")
+    out = df[[c for c in ("split", "y_bin", "score", "pred", "attack_class", "host_role", "run_id", "session",
+                          "host_mac", "window_start_epoch") if c in df]].rename(columns={"y_bin": "y"}).copy()
+    for c in df.columns:
+        if c.startswith("p_"):
+            out[c] = df[c]
+    out = out[out["split"] == "test"].reset_index(drop=True)
+    out.attrs["source"] = str(p)
+    return Loaded(out) if len(out) else Loaded(None, f"{p.name} has no test rows")
+
+
 def drop_attacker(pred):
     """The 'attacker host excluded' view of a prediction frame. Needs host_role."""
     if pred["host_role"].isna().all():
