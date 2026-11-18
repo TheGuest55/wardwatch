@@ -1,4 +1,4 @@
-.PHONY: check-session triage replay gen up down smoke session sessions features dataset datacheck test logs clean cic
+.PHONY: check-session triage replay gen up down smoke session sessions features dataset datacheck test logs clean cic dashboard-image dashboard-test dashboard
 
 # Regenerate docker-compose.yml, broker ACLs/accounts and .env from config/ward.json.
 gen:
@@ -70,3 +70,17 @@ cic:
 # Removes containers and locally built images. Never deletes data/.
 clean:
 	docker compose down --rmi local --remove-orphans
+
+# Read-only results dashboard (see docker/dashboard/README.md). make dashboard [DATA=path/to/data/processed/v2]
+dashboard-image:
+	docker build -t wardwatch-dashboard:0.1.0 docker/dashboard
+
+dashboard-test:
+	docker run --rm --network none -v "$(CURDIR):/work:ro" -w /work -e PYTHONDONTWRITEBYTECODE=1 \
+	  wardwatch-dashboard:0.1.0 python -m pytest tests/dashboard -q -p no:cacheprovider
+
+dashboard:
+	docker run --rm --name wardwatch-dashboard -p 8501:8501 \
+	  --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges \
+	  -v "$(CURDIR):/work:ro" -v "$(or $(DATA),$(CURDIR)/data/processed/v2):/data:ro" \
+	  -e WARDWATCH_DATA_ROOT=/data wardwatch-dashboard:0.1.0
