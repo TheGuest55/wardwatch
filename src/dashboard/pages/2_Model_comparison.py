@@ -63,10 +63,22 @@ with tab_ci:
     else:
         st.caption("Block bootstrap over whole attack runs and benign time chunks (never single windows).")
         for tag, d in b.data.items():
+            iv = d.get("intervals") if isinstance(d, dict) else None
+            if not iv:
+                continue                                       # e.g. a run record (selection.json) with no intervals
             st.markdown(f"**{tag}**")
-            for name, metrics in (d.get("intervals") or {}).items():
-                rows = [{"metric": k, "point": v["point"], "lo": v["lo"], "hi": v["hi"]} for k, v in metrics.items()]
+            flat = {k: v for k, v in iv.items() if isinstance(v, dict) and "point" in v}
+            if flat:                                           # {"B/xgboost": {point, lo, hi}, ...} (selection_details)
+                rows = [{"statistic / model": k, "point": v["point"], "lo": v["lo"], "hi": v["hi"]} for k, v in flat.items()]
+                st.dataframe(rows, use_container_width=True, hide_index=True)
+            for name, metrics in iv.items():                   # {"name": {"metric": {point, lo, hi}}} (bootstrap_ci)
+                if name in flat or not isinstance(metrics, dict):
+                    continue
+                rows = [{"metric": k, "point": v["point"], "lo": v["lo"], "hi": v["hi"]} for k, v in metrics.items()
+                        if isinstance(v, dict) and "point" in v]
                 st.markdown(f"_{name}_")
                 st.dataframe(rows, use_container_width=True, hide_index=True)
-            if d.get("comparisons"):
-                st.json(d["comparisons"], expanded=False)
+            for key in ("comparisons", "differences"):
+                if isinstance(d, dict) and d.get(key):
+                    st.markdown(f"_{key}_")
+                    st.json(d[key], expanded=False)

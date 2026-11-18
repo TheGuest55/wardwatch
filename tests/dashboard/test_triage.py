@@ -240,3 +240,27 @@ class TestIncidentsSessionFilter:
         at = run("src/dashboard/pages/6_Incidents.py", root, monkeypatch)
         assert not at.exception, [e.value for e in at.exception]
         assert at.selectbox[0].options == ["All"]
+
+
+class TestBootstrapTab:
+    def _page(self, root, monkeypatch):
+        at = run("src/dashboard/pages/2_Model_comparison.py", root, monkeypatch)
+        assert not at.exception, [e.value for e in at.exception]
+        return [d.value.to_dict("records") for d in at.dataframe]
+
+    def test_flat_selection_intervals_and_run_record_file_do_not_break_the_page(self, root, monkeypatch):
+        d = root / "runs" / "bootstrap"
+        d.mkdir(parents=True)
+        (d / "selection.json").write_text(json.dumps(record("xgboost", "bootstrap-ci", 0, 0.9)))        # a run record, no intervals
+        (d / "selection_details.json").write_text(json.dumps({
+            "intervals": {"B/xgboost": {"point": 0.44, "lo": 0.39, "hi": 0.49}},
+            "differences": {"sel/xgboost-random_forest": {"point": 0.01, "lo": -0.01, "hi": 0.03}}}))
+        tables = self._page(root, monkeypatch)
+        assert any(r.get("statistic / model") == "B/xgboost" and r.get("point") == 0.44 for t in tables for r in t)
+
+    def test_nested_intervals_still_render(self, root, monkeypatch):
+        d = root / "runs" / "bootstrap"
+        d.mkdir(parents=True)
+        (d / "ci.json").write_text(json.dumps({"intervals": {"xgb": {"f1": {"point": 0.9, "lo": 0.8, "hi": 0.95}}}}))
+        tables = self._page(root, monkeypatch)
+        assert any(r.get("metric") == "f1" and r.get("point") == 0.9 for t in tables for r in t)
