@@ -9,9 +9,9 @@ if df is None:
     ui.na(reason, "run records")
     st.stop()
 
-tab_a, tab_b, tab_c, tab_s, tab_ci = st.tabs(["Experiment A", "Experiment B (leave one attack out)",
-                                              "Experiment C (cross-dataset)", "Frame-size sensitivity",
-                                              "Bootstrap CIs"])
+tab_a, tab_b, tab_c, tab_s, tab_d, tab_ci = st.tabs(["Experiment A", "Experiment B (leave one attack out)",
+                                                    "Experiment C (cross-dataset)", "Frame-size sensitivity",
+                                                    "Experiment D (indicative)", "Bootstrap CIs"])
 
 with tab_a:
     t = mv.a_by_config(df, view)
@@ -55,6 +55,18 @@ with tab_s:
     else:
         st.dataframe(t, use_container_width=True, hide_index=True)
     ui.provenance(df, label="Provenance: records behind the other tabs (sensitivity records appear as excluded)")
+
+with tab_d:
+    st.caption("Experiment D (indicative benchmark): CIC's own feature CSVs and official train/test split, compared with the published "
+               "baselines (Dadkhah et al., Table 8). NOT comparable to Experiments A-C (different features, no host column, no "
+               "attacker-excluded view) and never part of the headline or the selection. Mean ± std over seeds.")
+    t = mv.d_table(df)
+    if t.empty:
+        ui.na("no report-grade Experiment D records (runs/expD/)", "Experiment D")
+    else:
+        st.dataframe(t, use_container_width=True, hide_index=True)
+        st.caption("Without IAT = the leakage re-run (working rule 3): IAT is the known time-proxy suspect in CIC's sister dataset.")
+    ui.provenance(df, label="Provenance: records behind the other tabs (D records appear as excluded from the headline)")
 
 with tab_ci:
     b = loaders.load_bootstrap(root)
