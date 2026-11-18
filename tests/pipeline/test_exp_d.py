@@ -36,6 +36,48 @@ class TestPathAndLabels(unittest.TestCase):
                          ["Benign", "Spoofing", "Recon", "MQTT", "DDoS", "DoS"])
 
 
+class TestSubsample(unittest.TestCase):
+    def test_seeded_stratified_train_only_keeps_validation_and_never_touches_test(self):
+        with tempfile.TemporaryDirectory() as t:
+            write_tree(t, n=100)
+            tr = exp_d.load_split("train", Path(t))
+            te = exp_d.load_split("test", Path(t))
+        sub, info = exp_d.subsample_train(tr, 0.25, seed=0)
+        sub2, _ = exp_d.subsample_train(tr, 0.25, seed=0)
+        self.assertTrue(sub.equals(sub2))                                           # seeded: reproducible
+        self.assertEqual(int(sub["is_val"].sum()), int(tr["is_val"].sum()))         # the validation tail is kept whole
+        fit_before = tr[~tr["is_val"]].groupby("c19", observed=True).size()
+        fit_after = sub[~sub["is_val"]].groupby("c19", observed=True).size()
+        for c in fit_before.index:
+            self.assertAlmostEqual(fit_after[c] / fit_before[c], 0.25, delta=0.02)   # stratified by class
+        self.assertEqual(info["train_rows_after"], len(sub))
+        self.assertLess(len(sub), len(tr))
+        same, i1 = exp_d.subsample_train(tr, 1.0)
+        self.assertIs(same, tr)
+        self.assertEqual(i1, {"train_subsample": 1.0})
+        with self.assertRaises(ValueError):
+            exp_d.subsample_train(tr, 0)
+        self.assertEqual(len(te), 5 * 100)                                           # the test frame is untouched by design
+
+    def test_main_records_the_subsample_and_suffixes_the_file_name(self):
+        import sys
+        with tempfile.TemporaryDirectory() as t:
+            write_tree(Path(t) / "csv", n=100)
+            out = Path(t) / "out"
+            orig, argv = exp_d.OUT, sys.argv
+            exp_d.OUT = out
+            sys.argv = ["exp_d", "--raw", str(Path(t) / "csv"), "--models", "random_forest", "--tasks", "2", "--seeds", "1",
+                        "--allow-partial", "--no-mlflow", "--train-subsample", "0.25"]
+            try:
+                exp_d.main()
+            finally:
+                exp_d.OUT, sys.argv = orig, argv
+            rec = json.loads((out / "random_forest_sub25.json").read_text())
+            self.assertEqual(rec["params"]["train_subsample"], 0.25)
+            self.assertEqual(rec["tags"]["train_subsample"], 0.25)
+            self.assertLess(rec["params"]["train_rows_after"], rec["params"]["train_rows_before"])
+
+
 class TestLoadSplit(unittest.TestCase):
     def test_reads_a_tiny_tree_with_stripped_columns_labels_and_val_tail(self):
         with tempfile.TemporaryDirectory() as t:

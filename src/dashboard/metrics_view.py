@@ -265,6 +265,9 @@ def d_table(df):
     rows = []
     for _, r in sub.sort_values(["experiment", "model"]).iterrows():
         variant = "all 45 features" if r["experiment"] == "D" else "without " + r["experiment"][len("D-drop-"):].upper()
+        sub = r.get("train_subsample")
+        if sub is not None and pd.notna(sub) and float(sub) < 1:
+            variant += f" · {float(sub):.0%} train subsample (out-of-memory fallback)"
         for t, label in D_TASKS:
             k = f"{t}c_f1_macro_mean"
             if k not in r or pd.isna(r[k]):

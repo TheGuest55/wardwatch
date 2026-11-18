@@ -320,6 +320,16 @@ class TestExperimentD:
         assert not mv.a_by_config(df, "all")["model"].isin(["random_forest"]).any()
         assert mv.b_per_class(df, "all").index.tolist() == mv.b_per_class(_df_without_d(root), "all").index.tolist()
 
+    def test_a_subsampled_record_is_labelled_so_and_the_full_rows_keep_their_labels(self, root):
+        write(root, "expD/random_forest.json", {**self._d("D"), "model": "random_forest"})
+        sub = {**self._d("D-drop-iat", f1=0.9), "model": "random_forest"}
+        sub["tags"] = {**sub["tags"], "train_subsample": 0.25}
+        write(root, "expD/random_forest_noiat_sub25.json", sub)
+        t = mv.d_table(_df(root))
+        assert "all 45 features" in set(t["variant"])
+        assert any(v == "without IAT · 25% train subsample (out-of-memory fallback)" for v in t["variant"])
+        assert not any("subsample" in v for v in t[t["variant"].str.startswith("all")]["variant"])
+
     def test_the_d_table_shows_no_training_time(self, root):
         write(root, "expD/xgboost.json", self._d("D"))
         t = mv.d_table(_df(root))

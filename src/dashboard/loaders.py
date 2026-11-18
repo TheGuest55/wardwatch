@@ -140,7 +140,7 @@ def load_records(root=None):
                 "model": rec["model"], "role": rec.get("role") or ROLE_OF.get(rec["model"]),
                 "experiment": str(rec["experiment"]),
                 "kind": "latency" if tags.get("latency") is True else "metrics",
-                "sensitivity": tags.get("sensitivity"),
+                "sensitivity": tags.get("sensitivity"), "train_subsample": tags.get("train_subsample"),
                 "config": _config_label(rec), "held_out_class": params.get("held_out_class"),
                 "direction": params.get("direction"), "threshold_mode": _threshold_mode(rec),
                 "seed": prov.get("seed"), "run_name": run_name, "for_report": bool(rec.get("for_report")),
