@@ -102,13 +102,30 @@ docker image inspect --format "{{index .Config.Labels \"org.opencontainers.image
 git rev-parse HEAD
 ```
 
-### 4. Run the tests (pipeline + harness, in the image)
+### 4. Run the tests (one command: the full suite)
 
 ```
-docker run --rm --network none -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 python -m unittest discover -s tests/pipeline -p "test_*.py"
+bash scripts/analysis.sh test        # or: make test
 ```
 
-Expected: it ends with `OK` (all pipeline + harness tests pass).
+This runs every test folder, even after one fails: `tests/pipeline`, `realtime`, `triage` and `generation` in the pinned
+analysis image (`--network none`, `data/raw` read-only), and `tests/dashboard` (pytest) in the dashboard image
+(`make dashboard-image` builds it; if it is missing the script says so and fails, it never skips). It ends with a
+per-folder line and a `TOTAL` line, and exits non-zero if any folder failed, skipped a test or ran 0 tests. A guard
+refuses to run if a `tests/<dir>` with `test_*.py` is not in the script's list.
+
+Expected on the current master (the counts grow as tests are added):
+
+| folder | tests |
+|---|---|
+| pipeline | 240 |
+| realtime | 18 |
+| triage | 44 |
+| generation | 50 |
+| dashboard | 51 |
+| **TOTAL** | **403** |
+
+`bash scripts/run_tests.sh generation` runs only the stdlib generation tests on the host Python (fast); the same 50 also run in the full suite.
 
 ### 5. Load the dataset with the harness
 

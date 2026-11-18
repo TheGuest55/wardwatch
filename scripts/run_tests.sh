@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Run the regression tests. Two tiers:
-#   generation/  - stdlib-only (payload builders, seeding, timing, grid-align, arp_mitm detection).
-#                  Run on the host python; imports only paho-free modules.
-#   pipeline/    - need pandas/scapy/sklearn; run inside the pinned analysis image via analysis.sh.
-# Usage: scripts/run_tests.sh [generation|pipeline|all]   (default all)
+# Run the regression tests.
+#   all (default) - the full suite: scripts/analysis.sh test (see there). `make test` is the alias.
+#   generation    - only tests/generation, on the host python (stdlib-only; paho-free modules).
+# Usage: scripts/run_tests.sh [generation|all]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -17,18 +16,14 @@ run_generation() {
   python3 -m unittest discover -s tests/generation -p 'test_*.py' -v
 }
 
-run_pipeline() {
-  if [ -d tests/pipeline ] && ls tests/pipeline/test_*.py >/dev/null 2>&1; then
-    echo "== pipeline tests (analysis image) =="
-    PYTHONPATH="" scripts/analysis.sh test
-  else
-    echo "== pipeline tests: none yet (skipped) =="
-  fi
+# The one-command full suite lives in scripts/analysis.sh test: pipeline, realtime, triage and generation in the analysis
+# image, dashboard in the dashboard image, a per-folder and TOTAL summary, non-zero on any failure, skip or empty folder.
+run_all() {
+  PYTHONPATH="" scripts/analysis.sh test
 }
 
 case "$TIER" in
-  generation) run_generation ;;
-  pipeline)   run_pipeline ;;
-  all)        run_generation; run_pipeline ;;
-  *) echo "usage: run_tests.sh [generation|pipeline|all]" >&2; exit 2 ;;
+  generation) run_generation ;;                 # host python only, fast (the same 50 tests also run inside `all`)
+  pipeline|all) run_all ;;
+  *) echo "usage: run_tests.sh [generation|all]" >&2; exit 2 ;;
 esac

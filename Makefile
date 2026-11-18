@@ -43,7 +43,7 @@ datacheck:
 	bash scripts/analysis.sh datacheck \
 	  $(if $(IN),--in-dir $(IN),) $(if $(REPORT),--out $(REPORT),)
 
-# Regression tests: generation (host, stdlib) + pipeline (analysis image). make test [TIER=generation]
+# Full regression suite (alias of scripts/analysis.sh test): pipeline, realtime, triage, generation, dashboard. make test [TIER=generation]
 test:
 	bash scripts/run_tests.sh "$(or $(TIER),all)"
 
