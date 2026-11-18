@@ -33,10 +33,21 @@ case "$CMD" in
     ;;
   dataset)   run python -m src.dataset "$@" ;;
   datacheck) run python -m src.datacheck.check "$@" ;;
-  test)      run python -m unittest discover -s tests/pipeline -p 'test_*.py' -v ;;
+  test)      run sh -c "python -m unittest discover -s tests/pipeline -p 'test_*.py' -v \
+                && python -m unittest discover -s tests/realtime -t . -p 'test_*.py' -v \
+                && python -m unittest discover -s tests/triage -t . -p 'test_*.py' -v" ;;
+  # Triage / real time / Experiment E (docs in the README "Triage and real time" section)
+  check-session) run python -m src.realtime.check_session --session "$@" ;;
+  triage)    run python -m src.triage.offline "$@" ;;
+  replay)
+    SESSION="${1:-}"
+    [ -n "$SESSION" ] || { echo "usage: analysis.sh replay <session> [--speed N] [--for-report]" >&2; exit 2; }
+    shift
+    run python -m src.experiments.run_e --session "$SESSION" "$@"
+    ;;
   shell)     run bash ;;
   *)
-    echo "usage: analysis.sh {features <session>|dataset|datacheck|test|shell}" >&2
+    echo "usage: analysis.sh {features <session>|dataset|datacheck|test|check-session <s>..|triage|replay <session>|shell}" >&2
     exit 2
     ;;
 esac
