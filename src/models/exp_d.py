@@ -1,9 +1,10 @@
 """Experiment D — INDICATIVE benchmark on CICIoMT2024's own feature CSVs + official split (./CLAUDE.md).
 
-    python -m src.models.exp_d [--models xgboost random_forest] [--drop iat] [--for-report]
+    python -m src.models.exp_d [--models xgboost random_forest] [--drop iat] [--raw PATH] [--for-report]
 
-Input : data/raw/ciciomt2024_csv/{train,test}/*.pcap.csv   (CIC's Wi-Fi/MQTT attack CSVs, 45 features,
-        one class per file; downloaded by hand after CIC's registration form)
+Input : data/raw/ciciomt2024/WiFi_and_MQTT/attacks/csv/{train,test}/*.pcap.csv   (CIC's Wi-Fi/MQTT attack CSVs,
+        45 features, one class per file; downloaded after CIC's registration form). --raw PATH points elsewhere
+        (read-only: nothing under data/raw is ever written, moved or copied).
 Output: data/processed/v2/runs/expD/{model}[_noiat].json (+ _details.json)
 
 Why "indicative": these are CIC's features (not our extractor), so the numbers compare our MODEL
@@ -41,7 +42,7 @@ from .. import common
 from . import tracking
 from .train_tree import N_JOBS, V2
 
-RAW = common.ROOT / "data" / "raw" / "ciciomt2024_csv"
+RAW = common.ROOT / "data" / "raw" / "ciciomt2024" / "WiFi_and_MQTT" / "attacks" / "csv"
 OUT = V2 / "runs" / "expD"
 VAL_TAIL = 0.10
 
@@ -194,13 +195,16 @@ def main():
     ap.add_argument("--tasks", nargs="+", default=["2", "6", "19"], choices=list(N_CLASSES))
     ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--drop", nargs="*", default=[], help="feature names to drop, e.g. IAT")
+    ap.add_argument("--raw", type=Path, default=RAW,
+                    help="folder holding train/ and test/ with CIC's *.pcap.csv files (default: %(default)s)")
     ap.add_argument("--allow-partial", action="store_true",
                     help="run even if some classes are missing (smoke test only; never report)")
     ap.add_argument("--for-report", action="store_true")
     ap.add_argument("--no-mlflow", action="store_true")
     args = ap.parse_args()
 
-    tr, te = load_split("train"), load_split("test")
+    raw = args.raw
+    tr, te = load_split("train", raw), load_split("test", raw)
     problems = check_complete(tr, te)
     if problems and not args.allow_partial:
         raise SystemExit("incomplete CIC download: " + "; ".join(problems))
@@ -264,14 +268,16 @@ def main():
                                        "val": f"last {VAL_TAIL:.0%} of each train file",
                                        "partial": bool(problems)},
             metrics=results, tags={"dataset": "CICIoMT2024 WiFi/MQTT CSV (official split)",
-                                   "details": str(det)},
+                                   "details": str(det), "indicative": True, "raw": str(raw),
+                                   "attacker_excluded_view": "not applicable (no host column in CIC's CSVs)",
+                                   "comparable_to_A_C": False},
             seed=0, split_path=None, dataset_path=None, for_report=False)
         # provenance for D: the CIC CSVs are the dataset; hash the file list, not one file
         rec["provenance"]["split_file"] = "CIC official train/test folders"
         rec["provenance"]["split_sha256"] = tracking.hashlib.sha256(
             "\n".join(files["train"] + files["test"]).encode()).hexdigest()
         rec["provenance"]["dataset_sha256"] = tracking.hashlib.sha256(
-            "".join(tracking._sha256_file(p) for p in sorted(RAW.rglob("*.csv"))).encode()).hexdigest()
+            "".join(tracking._sha256_file(p) for p in sorted(raw.rglob("*.csv"))).encode()).hexdigest()
         rec["for_report"] = bool(args.for_report)
         tracking.log_run(rec, json_path=str(OUT / f"{name}{tag}.json"), use_mlflow=not args.no_mlflow)
         print(f"[{name}] record -> {OUT / (name + tag + '.json')}")
