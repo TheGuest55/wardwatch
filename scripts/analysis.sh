@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-IMAGE="${ANALYSIS_IMAGE:-wardwatch-analysis:0.1.0}"
+IMAGE="${ANALYSIS_IMAGE:-wardwatch-analysis:0.2.0}"
 CMD="${1:-}"
 shift || true
 
@@ -39,6 +39,7 @@ case "$CMD" in
   # Triage / real time / Experiment E (docs in the README "Triage and real time" section)
   check-session) run python -m src.realtime.check_session --session "$@" ;;
   triage)    run python -m src.triage.offline "$@" ;;
+  merge-live) run python -m src.realtime.merge_live "$@" ;;
   replay)
     SESSION="${1:-}"
     [ -n "$SESSION" ] || { echo "usage: analysis.sh replay <session> [--speed N] [--for-report]" >&2; exit 2; }
@@ -47,7 +48,7 @@ case "$CMD" in
     ;;
   shell)     run bash ;;
   *)
-    echo "usage: analysis.sh {features <session>|dataset|datacheck|test|check-session <s>..|triage|replay <session>|shell}" >&2
+    echo "usage: analysis.sh {features <session>|dataset|datacheck|test|check-session <s>..|triage|merge-live|replay <session>|shell}" >&2
     exit 2
     ;;
 esac

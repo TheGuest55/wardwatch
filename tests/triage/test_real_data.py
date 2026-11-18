@@ -101,7 +101,7 @@ class TestLiveEqualsOffline(unittest.TestCase):
                 p = tmp / "live" / "slices" / f"{r['incident_id']}.pcap"
                 self.assertEqual(hashlib.sha256(p.read_bytes()).hexdigest(), r["pcap_sha256"])
                 self.assertTrue(r["top_features"])
-            lines = (tmp / "live" / "incidents.jsonl").read_text().splitlines()
+            lines = (tmp / "live" / "incidents_r05.jsonl").read_text().splitlines()
             self.assertEqual(len(lines), len(out["triager"].records))
             self.assertEqual(json.loads(lines[0])["session"], "r05")
 

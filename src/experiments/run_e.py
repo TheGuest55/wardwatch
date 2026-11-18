@@ -19,7 +19,8 @@ Equivalence with the offline run (a stop if broken; checks are exact, not "suspi
   * against the offline scoring of the stored session parquet: 0 band flips, 0 cell (verdict) flips, same rows;
   * the incidents equal the offline incidents of this session (ids, every field, sha256), apart from the slice
     directory (live/ vs triage/).
-Output: data/processed/v2/live/incidents.jsonl (what the dashboard shows) and runs/expE/E_<session>.json.
+Output: data/processed/v2/live/incidents_<session>.jsonl and runs/expE/E_<session>.json. `python -m src.realtime.merge_live`
+merges the per-session files into live/incidents.jsonl (what the dashboard shows) and verifies every slice hash.
 """
 import argparse
 import json
@@ -109,7 +110,7 @@ def replay_session(session, pair, key, gap, speed=1.0, max_seconds=None, live_di
     wb = windows.WindowBuilder(session, SENTINEL, SENTINEL, roles, with_peers=True)
     live_dir = Path(live_dir)
     live_dir.mkdir(parents=True, exist_ok=True)
-    post = LivePost(pair, session, live_dir, live_dir / "incidents.jsonl")
+    post = LivePost(pair, session, live_dir, live_dir / f"incidents_{session}.jsonl")
     tr = engine.Triager(session, roles, key, gap, post=post)
     rows_all, tick_s, tick_n, results, tick_done = [], [], [], {}, {}
     peers = {}
