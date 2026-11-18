@@ -10,6 +10,11 @@ st.caption("Only models with a logged calibration run appear here (isotonic/Plat
            "once on test). Raw scores that were never calibrated are not shown as if they were.")
 found = False
 for model in loaders.MODELS:
+    why = loaders.not_applicable(model, "calibration")
+    if why:
+        st.markdown(f"**{model}**")
+        st.info(f"calibration: not applicable. {why}.")
+        continue
     d = loaders.load_calibration_details(model, root)
     if not d.ok:
         st.markdown(f"**{model}**")

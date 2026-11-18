@@ -66,10 +66,23 @@ cm = derived.confusion_binary(pred)
 st.plotly_chart(px.imshow(cm, text_auto=True, color_continuous_scale="Blues", aspect="auto"), use_container_width=True)
 
 st.subheader("Multiclass confusion (classifiers, Experiment A)")
-if exp != "A":
+if loaders.not_applicable(model, "multiclass"):
+    st.info(f"multiclass confusion: not applicable. {loaders.not_applicable(model, 'multiclass')}.")
+elif exp != "A":
     ui.na("a withheld class cannot be named, so multiclass is Experiment A only")
 else:
     mc = derived.confusion_multiclass(pred)
+    if not mc.ok:                                         # the run's own predictions carry no p_<class> (the trees)
+        alt = loaders.load_multiclass_predictions(model, root)
+        if alt.ok:
+            mp, src = alt.data, alt.data.attrs.get("source")
+            if view == "noatk":
+                na = loaders.drop_attacker(mp)
+                mp = na.data if na.ok else None
+            if mp is not None:
+                mc = derived.confusion_multiclass(mp)
+                st.caption("Derived, seed 0 only: the saved seed-0 multiclass model scored on the Experiment A test rows "
+                           f"(`{src}`); not a logged metric.")
     if mc.ok:
         st.plotly_chart(px.imshow(mc.data, text_auto=True, color_continuous_scale="Blues", aspect="auto",
                                   labels=dict(x="predicted", y="actual")), use_container_width=True)

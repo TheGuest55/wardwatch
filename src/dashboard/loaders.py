@@ -25,6 +25,21 @@ from . import config
 MODELS = ("xgboost", "random_forest", "autoencoder", "isolation_forest", "lstm", "rule_baseline")
 ROLE_OF = {"xgboost": "classifier", "random_forest": "classifier", "lstm": "classifier",
            "autoencoder": "anomaly", "isolation_forest": "anomaly", "rule_baseline": "rule"}
+# What does not exist for a role. "not applicable" (by design) is different from "not available" (data missing):
+# the anomaly detectors and the rule baseline name no attack type and output no probability.
+NOT_APPLICABLE = {
+    "macro_f1": "no named attack type (macro-F1 needs a multiclass classifier)",
+    "multiclass": "no named attack type, so there is no multiclass confusion matrix",
+    "calibration": "no probability (a score or a rule strength, not a calibrated attack probability)",
+}
+NOT_APPLICABLE_ROLES = ("anomaly", "rule")
+
+
+def not_applicable(model, what):
+    """The one-line reason `what` (macro_f1 | multiclass | calibration) does not apply to `model`, else None."""
+    return NOT_APPLICABLE[what] if ROLE_OF.get(model) in NOT_APPLICABLE_ROLES else None
+
+
 # params that define a configuration (as opposed to a seed or a measured value)
 CONFIG_KEYS = ("k", "hidden", "use_presence")
 VIEW_PREFIX = {"all": "all", "noatk": "noatk"}   # "all rows" / "attacker host excluded"
@@ -221,6 +236,27 @@ def load_predictions(rec, root=None, split="test"):
         out.attrs["source"] = str(p)
         return Loaded(out)
     return Loaded(None, "no predictions file for this run")
+
+
+def load_multiclass_predictions(model, root=None):
+    """runs/expA/predictions/<model>_multiclass_s0.parquet (derived from the saved seed-0 multiclass model; only
+    XGBoost has one). Same normalised frame as load_predictions, with the p_<class> columns."""
+    root = Path(root) if root is not None else config.data_root()
+    p = root / "runs" / "expA" / "predictions" / f"{model}_multiclass_s0.parquet"
+    if not p.exists():
+        return Loaded(None, f"no multiclass predictions for {model} (runs/expA/predictions/{p.name} not found)")
+    try:
+        df = pd.read_parquet(p)
+    except Exception as exc:
+        return Loaded(None, f"multiclass predictions unreadable ({p.name}): {type(exc).__name__}")
+    out = df[[c for c in ("split", "y_bin", "score", "pred", "attack_class", "host_role", "run_id", "session",
+                          "host_mac", "window_start_epoch") if c in df]].rename(columns={"y_bin": "y"}).copy()
+    for c in df.columns:
+        if c.startswith("p_"):
+            out[c] = df[c]
+    out = out[out["split"] == "test"].reset_index(drop=True)
+    out.attrs["source"] = str(p)
+    return Loaded(out) if len(out) else Loaded(None, f"{p.name} has no test rows")
 
 
 def drop_attacker(pred):

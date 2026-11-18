@@ -12,11 +12,40 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from .loaders import MODELS, ROLE_OF, eligible, load_latency
+from .loaders import MODELS, ROLE_OF, eligible, load_latency, not_applicable
 
 CLASSES = ("arp_mitm", "bruteforce", "eavesdrop", "mqtt_flood", "pump_cmd", "recon_scan",
            "spoof_vitals", "syn_flood")
 HEADLINE_COLS = {"f1": "F1", "pr_auc": "PR-AUC", "fpr_at_recall_90": "FPR @ 90% recall"}
+
+
+NA_NOATK_MACRO = "not available (no attacker-excluded macro-F1 logged)"
+
+
+def macro_series(frame, view):
+    """The logged macro-F1 per record for a view, or None when no record logged one. All rows: `test_all_macro_f1`
+    where a record has it, else the plain `test_macro_f1` (tree records and the LSTM's all-rows value), per record.
+    Attacker excluded: only `test_noatk_macro_f1` (LSTM); trees log none, and the plain key is never reused for it."""
+    names = ("test_all_macro_f1", "test_macro_f1") if view == "all" else ("test_noatk_macro_f1",)
+    have = [frame[c] for c in names if c in frame.columns]
+    if not have:
+        return None
+    out = have[0]
+    for s in have[1:]:
+        out = out.fillna(s)
+    return out if out.notna().any() else None
+
+
+def macro_cell(g, model, view):
+    """(formatted cell, numeric twin, not-applicable reason) for one group of records of one model."""
+    why = not_applicable(model, "macro_f1")
+    if why:
+        return "not applicable", np.nan, why
+    ser = macro_series(g, view)
+    if ser is None:
+        return (NA_NOATK_MACRO if view == "noatk" else "not available"), np.nan, None
+    m = mean_std(ser)
+    return fmt(*m[:2]), m[0], None
 
 
 def mean_std(values):
@@ -70,8 +99,8 @@ def experiment_a(df, model, view="all", root=None):
     for key in HEADLINE_COLS:
         col = f"test_{view}_{key}"
         out[key] = mean_std(sub[col]) if col in sub else (np.nan, np.nan, 0)
-    col = f"test_{view}_macro_f1"
-    out["macro_f1"] = mean_std(sub[col]) if col in sub else (np.nan, np.nan, 0)
+    ser = macro_series(sub, view)
+    out["macro_f1"] = mean_std(ser) if ser is not None else (np.nan, np.nan, 0)
     return out
 
 
@@ -162,11 +191,11 @@ def a_by_config(df, view="all"):
     rows = []
     for (model, cfg), g in sub.groupby(["model", "config"]):
         r = {"model": model, "config": cfg, "seeds": int(g["seed"].nunique())}
-        for key, name in {"f1": "F1", "pr_auc": "PR-AUC", "fpr_at_recall_90": "FPR @ 90% recall",
-                          "macro_f1": "macro-F1"}.items():
+        for key, name in {"f1": "F1", "pr_auc": "PR-AUC", "fpr_at_recall_90": "FPR @ 90% recall"}.items():
             col = f"test_{view}_{key}"
             r[name] = fmt(*mean_std(g[col])[:2]) if col in g else "not available"
             r["_" + name] = mean_std(g[col])[0] if col in g else np.nan
+        r["macro-F1"], r["_macro-F1"], _ = macro_cell(g, model, view)
         rows.append(r)
     return pd.DataFrame(rows)
 
