@@ -66,7 +66,9 @@ cm = derived.confusion_binary(pred)
 st.plotly_chart(px.imshow(cm, text_auto=True, color_continuous_scale="Blues", aspect="auto"), use_container_width=True)
 
 st.subheader("Multiclass confusion (classifiers, Experiment A)")
-if exp != "A":
+if loaders.not_applicable(model, "multiclass"):
+    st.info(f"multiclass confusion: not applicable. {loaders.not_applicable(model, 'multiclass')}.")
+elif exp != "A":
     ui.na("a withheld class cannot be named, so multiclass is Experiment A only")
 else:
     mc = derived.confusion_multiclass(pred)

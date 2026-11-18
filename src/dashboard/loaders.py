@@ -25,6 +25,21 @@ from . import config
 MODELS = ("xgboost", "random_forest", "autoencoder", "isolation_forest", "lstm", "rule_baseline")
 ROLE_OF = {"xgboost": "classifier", "random_forest": "classifier", "lstm": "classifier",
            "autoencoder": "anomaly", "isolation_forest": "anomaly", "rule_baseline": "rule"}
+# What does not exist for a role. "not applicable" (by design) is different from "not available" (data missing):
+# the anomaly detectors and the rule baseline name no attack type and output no probability.
+NOT_APPLICABLE = {
+    "macro_f1": "no named attack type (macro-F1 needs a multiclass classifier)",
+    "multiclass": "no named attack type, so there is no multiclass confusion matrix",
+    "calibration": "no probability (a score or a rule strength, not a calibrated attack probability)",
+}
+NOT_APPLICABLE_ROLES = ("anomaly", "rule")
+
+
+def not_applicable(model, what):
+    """The one-line reason `what` (macro_f1 | multiclass | calibration) does not apply to `model`, else None."""
+    return NOT_APPLICABLE[what] if ROLE_OF.get(model) in NOT_APPLICABLE_ROLES else None
+
+
 # params that define a configuration (as opposed to a seed or a measured value)
 CONFIG_KEYS = ("k", "hidden", "use_presence")
 VIEW_PREFIX = {"all": "all", "noatk": "noatk"}   # "all rows" / "attacker host excluded"
