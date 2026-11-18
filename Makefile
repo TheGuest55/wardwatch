@@ -1,4 +1,4 @@
-.PHONY: gen up down smoke session sessions features dataset datacheck test logs clean dashboard-image dashboard-test dashboard
+.PHONY: check-session triage replay gen up down smoke session sessions features dataset datacheck test logs clean cic dashboard-image dashboard-test dashboard
 
 # Regenerate docker-compose.yml, broker ACLs/accounts and .env from config/ward.json.
 gen:
@@ -46,6 +46,26 @@ datacheck:
 # Regression tests: generation (host, stdlib) + pipeline (analysis image). make test [TIER=generation]
 test:
 	bash scripts/run_tests.sh "$(or $(TIER),all)"
+
+# Triage (offline, held-out sessions) and the live replay (Experiment E). Needs the model artefacts from
+# the README pipeline (A, calibration, save_multiclass) and `make check-session` for the peer sidecars.
+#   make check-session SESSIONS="n02 r01 r02 r03 r04 r05 r06 r07"
+#   make triage
+#   make replay SESSION=r05 [ARGS="--speed 1 --for-report"]
+check-session:
+	bash scripts/analysis.sh check-session $(or $(SESSIONS),r05)
+
+triage:
+	bash scripts/analysis.sh triage $(ARGS)
+
+replay:
+	@test -n "$(SESSION)" || { echo "usage: make replay SESSION=r05 [ARGS=...]"; exit 2; }
+	bash scripts/analysis.sh replay $(SESSION) $(ARGS)
+
+# CICIoMT2024 windows for Experiment C: the 19 single-attacker (DoS) PCAPs only, DDoS excluded.
+# Dry run (check and list the staged files, extract nothing): bash scripts/extract_cic_dos.sh --list
+cic:
+	bash scripts/extract_cic_dos.sh
 
 # Removes containers and locally built images. Never deletes data/.
 clean:

@@ -40,7 +40,7 @@ class _Acc:
         "connack_fail", "clientid_reuse", "wildcard_subs", "topic_depth_max", "is_command_pub",
         "arp_req", "arp_reply", "arp_gratuitous",
         "vital_max_jump", "vital_jump_count", "implausible",
-        "touches_attacker", "ip_counts", "flows", "flow_fs",
+        "touches_attacker", "ip_counts", "flows", "flow_fs", "peer_pkts",
     )
 
     def __init__(self):
@@ -66,6 +66,7 @@ class _Acc:
         self.ip_counts = {}
         self.flows = set()        # distinct transport flow keys active in this (mac, window)
         self.flow_fs = {}         # flow_key -> its first-seen epoch AS OF this window (reset-aware)
+        self.peer_pkts = {}       # peer mac -> [sent, recv] unicast packets (metadata; WindowBuilder with_peers)
 
 
 def _topic_depth(topic):
@@ -96,38 +97,61 @@ def _flow_key(rec):
     return (rec["l4"], lo, hi)
 
 
-def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
-    """Consume per-packet dicts (in capture order) and return (rows, conflict_windows).
+class WindowBuilder:
+    """Incremental per-(mac, 5 s window) feature builder; build_rows() is "add every packet, then flush".
 
-    rows: list of per-(mac,window) feature+metadata dicts. conflict_windows: set of window_start
-    epochs in which an IP was seen mapped to more than one MAC (joined onto rows as ip_mac_conflict).
+    add(rec) takes one packet record (capture order); close_before(t) finalizes and returns the rows
+    of every window that ends at or before epoch t; flush() returns whatever is still open.
+    Rows within one call keep first-touch order, so build_rows' output is unchanged.
+
+    A packet whose window was already closed is LATE: it is counted in `late_packets` (never silently
+    dropped) and still processed, so it shows up as an extra row for that window on the next close/flush
+    and in `late_windows`. Nothing here depends on the clock: the caller decides when to close.
+
+    with_peers=True adds `peer_pkts` to each row: {peer_mac: [sent, received]} over UNICAST packets, the
+    host's packets to/from each peer in the window. It is METADATA for source attribution only, never a
+    model input (not in common.FEATURES); build_rows leaves it out so its rows are unchanged.
     """
-    acc = {}                      # (mac, win) -> _Acc
-    # Live client-id ownership by TCP connection (review M5): a CONNECT whose client id is currently
-    # held by a *different* live connection is reuse. Ownership is released on DISCONNECT/FIN/RST, so
-    # a benign device reconnecting after its previous session closed is not counted.
-    active_cid = {}               # client_id -> owning connection key
-    conn_cid = {}                 # connection key -> client_id it currently holds
-    ip_to_mac = {}               # running IP->MAC map (latest), for conflict detection
-    conflict_windows = set()      # windows with ANY conflict (for the extract-level count)
-    conflict_macs = {}            # win -> set of MACs involved in a conflicting IP claim (review M2)
-    # Flow lifecycle (review m-new-1): first-seen is reset when a flow is reopened — i.e. after a
-    # FIN/RST closed it, or after >FLOW_IDLE_TIMEOUT idle — so nf_mean_flow_age stays bounded and a
-    # reopened 4-tuple counts as a genuinely new flow.
-    flow_first_seen = {}          # flow_key -> epoch its CURRENT life began (causal; never future)
-    flow_last_seen = {}           # flow_key -> epoch of its most recent packet
-    flow_closed = {}              # flow_key -> True once FIN/RST seen (next packet reopens)
-    plaus = PlausibilityTracker()
 
-    def get(mac, win):
+    def __init__(self, session, attacker_mac, attacker_ip, ip_roles, with_peers=False):
+        self.session, self.attacker_mac, self.attacker_ip = session, attacker_mac, attacker_ip
+        self.ip_roles, self.with_peers = ip_roles, with_peers
+        self.acc = {}                 # (mac, win) -> _Acc, in first-touch order
+        # Live client-id ownership by TCP connection (review M5): a CONNECT whose client id is currently
+        # held by a *different* live connection is reuse. Ownership is released on DISCONNECT/FIN/RST, so
+        # a benign device reconnecting after its previous session closed is not counted.
+        self.active_cid = {}          # client_id -> owning connection key
+        self.conn_cid = {}            # connection key -> client_id it currently holds
+        self.ip_to_mac = {}           # running IP->MAC map (latest), for conflict detection
+        self.conflict_windows = set()  # windows with ANY conflict (for the extract-level count)
+        self.conflict_macs = {}       # win -> set of MACs involved in a conflicting IP claim (review M2)
+        # Flow lifecycle (review m-new-1): first-seen is reset when a flow is reopened — i.e. after a
+        # FIN/RST closed it, or after >FLOW_IDLE_TIMEOUT idle — so nf_mean_flow_age stays bounded and a
+        # reopened 4-tuple counts as a genuinely new flow.
+        self.flow_first_seen = {}     # flow_key -> epoch its CURRENT life began (causal; never future)
+        self.flow_last_seen = {}      # flow_key -> epoch of its most recent packet
+        self.flow_closed = {}         # flow_key -> True once FIN/RST seen (next packet reopens)
+        self.plaus = PlausibilityTracker()
+        self.closed_to = None         # highest t passed to close_before
+        self.late_packets = 0
+        self.late_windows = set()
+        self.n_packets = 0
+
+    def _get(self, mac, win):
         key = (mac, win)
-        a = acc.get(key)
+        a = self.acc.get(key)
         if a is None:
-            a = acc[key] = _Acc()
+            a = self.acc[key] = _Acc()
         return a
 
-    for rec in packet_iter:
+    def add(self, rec):
+        acc_get = self._get
         win = common.window_start(rec["ts"])
+        self.n_packets += 1
+        if self.closed_to is not None and win + common.WINDOW_SECONDS <= self.closed_to:
+            self.late_packets += 1
+            self.late_windows.add(win)
+        attacker_mac, attacker_ip = self.attacker_mac, self.attacker_ip
         src, dst = rec["eth_src"], rec["eth_dst"]
         size = rec["length"]
         peer_ip_for_src = rec.get("ip_dst")
@@ -144,25 +168,28 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
         # window's end and never a flow's whole (or future) lifetime.
         fkey = _flow_key(rec)
         if fkey is not None:
-            prev_last = flow_last_seen.get(fkey)
-            reopened = (fkey not in flow_first_seen or flow_closed.get(fkey, False)
+            prev_last = self.flow_last_seen.get(fkey)
+            reopened = (fkey not in self.flow_first_seen or self.flow_closed.get(fkey, False)
                         or (prev_last is not None and rec["ts"] - prev_last > FLOW_IDLE_TIMEOUT))
             if reopened:
-                flow_first_seen[fkey] = rec["ts"]
-                flow_closed[fkey] = False
-            flow_last_seen[fkey] = rec["ts"]
+                self.flow_first_seen[fkey] = rec["ts"]
+                self.flow_closed[fkey] = False
+            self.flow_last_seen[fkey] = rec["ts"]
             # A FIN/RST closes the flow AFTER this packet (the packet still belongs to it).
             if rec["l4"] == "tcp" and (rec.get("fin") or rec.get("rst")):
-                flow_closed[fkey] = True
+                self.flow_closed[fkey] = True
 
         # ---- sender side ----
-        a = get(src, win)
+        a = acc_get(src, win)
         a.pkts_sent += 1
         a.bytes_sent += size
         a.sizes.append(size)
         a.ts.append(rec["ts"])
         if not _is_groupcast(dst):
             a.peers.add(dst)
+            if self.with_peers:
+                pp = a.peer_pkts.setdefault(dst, [0, 0])
+                pp[0] += 1
         if peer_ip_for_src:
             a.peer_ips.add(peer_ip_for_src)
         if rec.get("ip_src"):
@@ -171,7 +198,7 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
             a.touches_attacker = True
         if fkey is not None:
             a.flows.add(fkey)
-            a.flow_fs[fkey] = flow_first_seen[fkey]
+            a.flow_fs[fkey] = self.flow_first_seen[fkey]
 
         # Protocol/flag counts cover every packet the host sends OR receives (./CLAUDE.md
         # granularity; review M4). Sender side also records MQTT message counts and the stateful
@@ -181,27 +208,30 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
             # Release client-id ownership when its connection closes (FIN/RST), either direction.
             if rec.get("rst") or rec.get("fin"):
                 conn = _mqtt_conn_key(rec)
-                held_cid = conn_cid.pop(conn, None) if conn else None
-                if held_cid is not None and active_cid.get(held_cid) == conn:
-                    del active_cid[held_cid]
+                held_cid = self.conn_cid.pop(conn, None) if conn else None
+                if held_cid is not None and self.active_cid.get(held_cid) == conn:
+                    del self.active_cid[held_cid]
             _count_mqtt(a, rec)
-            _stateful_mqtt(a, rec, active_cid, conn_cid, plaus)
+            _stateful_mqtt(a, rec, self.active_cid, self.conn_cid, self.plaus)
 
         # ---- receiver side (unicast only) ----
         if not _is_groupcast(dst):
-            b = get(dst, win)
+            b = acc_get(dst, win)
             b.pkts_recv += 1
             b.bytes_recv += size
             b.sizes.append(size)
             b.ts.append(rec["ts"])
             b.peers.add(src)
+            if self.with_peers:
+                pp = b.peer_pkts.setdefault(src, [0, 0])
+                pp[1] += 1
             if peer_ip_for_dst:
                 b.peer_ips.add(peer_ip_for_dst)
             if attacker_peer:
                 b.touches_attacker = True
             if fkey is not None:
                 b.flows.add(fkey)
-                b.flow_fs[fkey] = flow_first_seen[fkey]
+                b.flow_fs[fkey] = self.flow_first_seen[fkey]
             # Count received protocol/flags and MQTT messages too (review M4): a subscriber's or
             # eavesdropper's received PUBLISHes, and failed CONNACKs a client receives, are otherwise
             # invisible. Plausibility and client-id ownership stay sender-only (not re-scored here).
@@ -217,18 +247,49 @@ def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
         elif l3 == "ip" and rec.get("ip_src"):
             claim_ip, claim_mac = rec["ip_src"], src
         if claim_ip and claim_mac:
-            prev = ip_to_mac.get(claim_ip)
+            prev = self.ip_to_mac.get(claim_ip)
             if prev is not None and prev != claim_mac:
-                conflict_windows.add(win)
+                self.conflict_windows.add(win)
                 # Only the old and new owners of the disputed IP are "involved" (review M2); the
                 # flag is a host property, not a window-wide one, so bystanders stay unflagged.
-                conflict_macs.setdefault(win, set()).update({prev, claim_mac})
-            ip_to_mac[claim_ip] = claim_mac
+                self.conflict_macs.setdefault(win, set()).update({prev, claim_mac})
+            self.ip_to_mac[claim_ip] = claim_mac
 
-    rows = [_finalize(mac, win, a, session, ip_roles,
-                      mac in conflict_macs.get(win, ()), attacker_mac)
-            for (mac, win), a in acc.items()]
-    return rows, conflict_windows
+    def _row(self, mac, win, a):
+        row = _finalize(mac, win, a, self.session, self.ip_roles,
+                        mac in self.conflict_macs.get(win, ()), self.attacker_mac)
+        if self.with_peers:
+            row["peer_pkts"] = a.peer_pkts
+        return row
+
+    def close_before(self, t):
+        """Finalize and return the rows of every window whose end is <= t (epoch seconds)."""
+        if self.closed_to is None or t > self.closed_to:
+            self.closed_to = t
+        done = [k for k in self.acc if k[1] + common.WINDOW_SECONDS <= t]
+        rows = [self._row(mac, win, self.acc.pop((mac, win))) for mac, win in done]
+        for w in {k[1] for k in done}:
+            if not any(k[1] == w for k in self.acc):
+                self.conflict_macs.pop(w, None)
+        return rows
+
+    def flush(self):
+        """Finalize and return every window still open."""
+        rows = [self._row(mac, win, a) for (mac, win), a in self.acc.items()]
+        self.acc = {}
+        return rows
+
+
+def build_rows(packet_iter, session, attacker_mac, attacker_ip, ip_roles):
+    """Consume per-packet dicts (in capture order) and return (rows, conflict_windows).
+
+    rows: list of per-(mac,window) feature+metadata dicts. conflict_windows: set of window_start
+    epochs in which an IP was seen mapped to more than one MAC (joined onto rows as ip_mac_conflict).
+    """
+    wb = WindowBuilder(session, attacker_mac, attacker_ip, ip_roles)
+    for rec in packet_iter:
+        wb.add(rec)
+    return wb.flush(), wb.conflict_windows
 
 
 def _count_proto_flags(a, rec, is_sender):

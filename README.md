@@ -154,6 +154,90 @@ record if any provenance field is null, so pass the `-e` vars above.)
 - If PowerShell errors on `${PWD}` in a `-v` flag, use `"$($PWD.Path):/work"` (and likewise for the
   `data/raw` mount).
 - `data/` is gitignored, so nothing you place or generate here is committed.
+- The repo is **private**, so the plain `curl` / `Invoke-WebRequest` in step 2 saves a 9-byte
+  "Not Found" file instead of the zip. Use the GitHub CLI (logged in as a collaborator) instead:
+  `gh release download v2-dataset -R TheGuest55/wardwatch -p wardwatch-v2-dataset.zip`.
+
+## Tree-classifier experiments (XGBoost + Random Forest)
+
+Everything below runs in the analysis image. **`RUN`** means the full step-6 prefix, with the three
+`-e WARDWATCH_*` provenance flags, up to and including `wardwatch-analysis:0.2.0`. Add
+`--for-report` only on a clean tree (`git status` empty). Run the steps in order: each one reads the
+previous step's outputs under `data/processed/v2/`.
+
+| # | Step | Command (after `RUN`) | Writes |
+|---|---|---|---|
+| A | Experiment A (time split) + seed-0 models | `python -m src.models.train_tree --model xgboost --for-report` (and `--model random_forest`) | `runs/expA/`, `models/expA/` |
+| B / C | Leave-one-attack-out / cross-dataset | `python -m src.models.train_tree --model xgboost --experiment B` (or `C`) | `runs/expB/`, `runs/expC/` |
+| A–C report | Per-seed report records (both views: all rows / attacker excluded), saved predictions, DDoS guard; same protocol as `train_tree` | `python -m src.experiments.run_tree_report --model xgboost --experiment A --for-report` (then `B`, `C`; repeat for `random_forest`) | `runs/exp{A,B,C}/<model>_*_s<seed>.json`, `predictions/`, `<model>_summary.md` |
+| 1 | Random-split reference (proposal §3.4) | `python -m src.models.random_split --model xgboost --seeds 5 --save-predictions --for-report` | `runs/random_split/`, `runs/predictions/random_*.parquet` |
+| 2 | Calibration, confidence bands, SHAP | `python -m src.models.calibrate_explain --model xgboost --for-report` | `runs/calibration/`, `models/expA/*_calibrator.joblib`, `*_triage_config.json` |
+| 3 | Block-bootstrap 95% CIs | `python -m src.models.bootstrap_ci --export-a xgboost --export-a random_forest --pred A_xgboost --pred A_random_forest --pred random_xgboost --pred random_random_forest --tag xgb_rf_time_random --for-report` | `runs/bootstrap/`, `runs/predictions/A_*.parquet` |
+| C size check | Frame-size sensitivity: Experiment C as trained without the 7 frame-size features (not a selection input) | `python -m src.experiments.run_tree_report --model xgboost --experiment C --size-variant nosize --for-report` (same flag on `train_autoencoder --model isolation_forest` and `run_lstm_c`) | `runs/expC_nosize/`, `runs/lstm_c_nosize/` |
+| 2b | XGBoost single-window latency from raw input (scoring + calibration; SHAP separately), idle machine, `--cpus 1`; then the pair p95 from the records | `python -m src.experiments.tree_latency` then `python -m src.experiments.tree_latency --pair` | `runs/expA/latency_xgboost.json`, `latency_pair_xgboost_isolation_forest_summary.json` |
+| 3b | Block-bootstrap CIs for the selection rule (B, C, their mean; XGBoost−RF, XGBoost−LSTM, IF−AE) | `python -m src.models.bootstrap_selection --for-report` | `runs/bootstrap/selection.{json,md}`, `selection_details.json` |
+| 4 | Report figures (PNG 300 dpi + PDF) | `python -m src.models.figures` | `figures/` |
+| D | Benchmark on CICIoMT2024's own CSVs | `python -m src.models.exp_d --models xgboost random_forest --for-report` (leakage check: add `--drop IAT --seeds 1`) | `runs/expD/` |
+
+Steps A, B/C, 1 and 2 repeat with `--model random_forest`. Step D is the long one: measured on a
+12-core laptop, XGBoost with 3 seeds takes ≈ 1.6 h (most of it on the 19-class task) and RF ≈ 25 min.
+The other steps take minutes.
+
+**Triage, real time and Experiment E (deployed pair: XGBoost + Isolation Forest)**
+
+Run after the Experiment A runs (XGBoost and the Isolation Forest seed-0 artefacts) and calibration (step 2); same container
+recipe as above (`--network none`, `data/raw` read-only, provenance env vars). One heavy job at a time.
+
+| # | Step | Command (after `RUN`) | Writes |
+|---|---|---|---|
+| T1 | Refit and save the multiclass XGBoost that names the type (asserts its macro-F1 equals the recorded seed-0 value) | `python -m src.models.save_multiclass` | `models/expA/xgboost_multiclass_seed0.{json,_classes.json}` |
+| T2 | Streaming window builder equals the stored session parquet exactly (all 51 features incl. the causal flow stats, no extra/missing rows, 0 late packets); writes the peer sidecars | `python -m src.realtime.check_session --session n02 r01 r02 r03 r04 r05 r06 r07` (`make check-session SESSIONS="..."`) | `triage/peers_<S>.parquet`, `triage/check_session.json` |
+| T3 | Offline triage: grouping key/gap chosen on val r04/r06, six-cell table, incidents with SHAP and hashed slices, grouping accuracy, time to detect, B withheld share, false-novel rate | `python -m src.triage.offline --for-report` (`make triage ARGS=--for-report`) | `triage/incidents_offline.jsonl`, `triage/slices/`, `runs/triage/triage_{A,B_withheld}.json`, `triage_summary.md` |
+| E | Experiment E: replay a held-out session through the pair at `--speed` (1 = real time), timer-closed 5 s windows, per-tick latency vs 50 ms | `python -m src.experiments.run_e --session r05 --speed 1 --for-report` (`make replay SESSION=r05 ARGS="--for-report"`) | `live/incidents.jsonl` (the dashboard shows this), `live/slices/`, `runs/expE/E_<S>.json` |
+
+The six verdicts are CLAUDE.md's; the two "Detectors disagree" cells share the string and carry a `cell` field
+(`review_anomaly_only`, `review_classifier_only`). `host_role` is display only: it never changes a verdict, attribution
+or grouping. **PCAP slices contain the lab's plaintext MQTT credentials**: they are written only under the gitignored
+`data/processed/v2/{triage,live}/slices/`; never commit, publish or share them.
+
+**Using the outputs in other modules**
+
+- *Triage / dashboard:* `from src.models.calibrate_explain import CalibratedDetector`, then
+  `d = CalibratedDetector.load("xgboost")`. `d.probability(X)` returns the calibrated attack
+  probability, `d.band(X)` returns 0 = confident benign, 1 = unsure, 2 = confident attack, and
+  `d.explain(x)` returns the top-3 reasons in plain language.
+- *Comparing another model (autoencoder, IF, LSTM, rules):* save its Experiment A test predictions
+  with `src.models.predictions.save_predictions(meta, y, score, pred, "A", "<model>")`, then run
+  `python -m src.models.bootstrap_ci --pred A_xgboost --pred A_<model>` for paired CIs.
+
+**Experiment D data (not in the dataset bundle).** CIC requires a registration form, so download by
+hand from <https://www.unb.ca/cic/datasets/iomt-dataset-2024.html> → `WiFI_and_MQTT/attacks/CSV`:
+all 51 `train/` and all 21 `test/` files (≈ 2.2 GB) into `data/raw/ciciomt2024_csv/{train,test}/`.
+The server serves **one download per login session at a time** and pauses often, so download the
+files one by one rather than in parallel. `exp_d` refuses to run unless all 19 classes are present.
+Memory: the full set needs ≈ 4 GB in Docker. Random Forest *without IAT* on the 6- and 19-class
+tasks needs more than the default 8 GB and was not run.
+
+**Headline results** (details and every number's run record are in each `runs/…/*.json`):
+
+- *Random vs time split:* shuffling windows (71% of test windows have a neighbour in train; 100% of
+  test attacks come from a run seen in training) does **not** raise F1: XGBoost 0.896 → 0.900,
+  RF 0.918 → 0.911, CIs overlap. The time split is already in-distribution (every attack class in
+  every session), so experiments B and C are the real generalisation tests.
+- *Calibration:* isotonic (chosen by cross-fitting the two validation sessions) cuts XGBoost's test
+  ECE from 0.0176 to 0.0013. Misses concentrate in eavesdrop, pump_cmd and spoof_vitals. A calibrated
+  score plus SHAP explanation takes 33.6 ms per window (p95), inside the 50 ms budget. RF takes
+  83 ms / 181 ms, over budget.
+- *CIs (Experiment A, paired):* XGBoost − RF F1 = −0.021 [−0.032, −0.011], but PR-AUC is equal
+  (+0.000 [−0.007, +0.008]): the two models separate attacks equally well and differ only in where
+  the validation threshold lands.
+- *Experiment D (CIC official split):* matches the published best (Dadkhah et al., Table 8) on 2 and
+  6 classes: XGBoost macro-F1 0.983 / 0.946 and RF 0.984 / 0.949, vs 0.982 / 0.942 published. RF
+  reaches 0.902 on 19 classes vs 0.907 published. **However, CIC's `IAT` column is a capture
+  timestamp**: it is near-constant within each attack class and identical across train and test.
+  Without it, XGBoost multiclass macro-F1 falls to 0.822 (6 classes) and 0.703 (19 classes),
+  accuracy ≈ 0.80. Binary detection is robust (0.970). The published multiclass numbers are
+  therefore inflated by a recording artefact, not attack behaviour.
 
 ## Running the lab (not needed for model work)
 
