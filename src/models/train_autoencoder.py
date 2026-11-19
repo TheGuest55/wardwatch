@@ -451,7 +451,7 @@ def run_a(model_name, env):
 
 
 # ------------------------------------------------------------------------------------ Experiment B
-def run_b(model_name, ds, feats, args=None, env=None):
+def run_b(model_name, ds, feats, args=None, env=None, only=None):
     """Leave-one-attack-out. The detector trains on BENIGN-ONLY traffic, so withholding class X never
     changes training; the model is therefore fitted ONCE per seed and reused for every class. X is
     withheld from the validation rows that set the threshold, and TEST is benign + X only. One
@@ -468,6 +468,8 @@ def run_b(model_name, ds, feats, args=None, env=None):
     c_va, c_te = cls_of(mva), cls_of(mte)
     Xva_all, yva, Xte, yte = ds.X("val"), ds.y("val"), ds.X("test"), ds.y("test")
     classes = sorted(set(cls_of(ds.meta("train"))) - {"benign"})
+    if only:                                                  # reproduce-B: a documented subset of the held-out classes
+        classes = [c for c in classes if c in only]
     d = env.exp_dir("B")
     for X in classes:
         if int(yte[(c_te == "benign") | (c_te == X)].sum()) == 0:

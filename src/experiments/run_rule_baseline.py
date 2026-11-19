@@ -131,7 +131,7 @@ def run_a(env):
 
 
 # ------------------------------------------------------------------------------------ Experiment B
-def run_b(env):
+def run_b(env, only=None):
     ta.preflight(env)
     ds = ta._load(env, scale=False)
     feats = ds.feature_names
@@ -143,6 +143,8 @@ def run_b(env):
     c_va, c_te = cls_of(mva), cls_of(mte)
     Xva, yva, Xte, yte = ds.X("val"), ds.y("val"), ds.X("test"), ds.y("test")
     classes = sorted(set(cls_of(ds.meta("train"))) - {"benign"})
+    if only:                                                  # reproduce-B: a documented subset of the held-out classes
+        classes = [c for c in classes if c in only]
     d = env.exp_dir("B")
     for X in classes:
         if int(yte[(c_te == "benign") | (c_te == X)].sum()) == 0:

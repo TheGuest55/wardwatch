@@ -121,6 +121,14 @@ case "$CMD" in
   check-session) run python -m src.realtime.check_session --session "$@" ;;
   triage)    run python -m src.triage.offline "$@" ;;
   merge-live) run python -m src.realtime.merge_live "$@" ;;
+  # Reproduce recorded results (USER_MANUAL Level 2): A | B | lstm. Output only under data/processed/v2/repro/.
+  reproduce)
+    WHAT="${1:-}"
+    case "$WHAT" in A|B|lstm) ;; *) echo "usage: analysis.sh reproduce {A|B|lstm} [--out DIR]" >&2; exit 2 ;; esac
+    shift
+    docker run --rm --network none --cpus "${ANALYSIS_CPUS:-5}" -e ANALYSIS_CPUS="${ANALYSIS_CPUS:-5}" \
+      -v "$PWD":/work -v "$PWD/data/raw":/work/data/raw:ro -w /work "$IMAGE" python -m src.reproduce "$WHAT" "$@"
+    ;;
   replay)
     SESSION="${1:-}"
     [ -n "$SESSION" ] || { echo "usage: analysis.sh replay <session> [--speed N] [--for-report]" >&2; exit 2; }
@@ -129,7 +137,7 @@ case "$CMD" in
     ;;
   shell)     run bash ;;
   *)
-    echo "usage: analysis.sh {features <session>|dataset|datacheck|test (the full suite)|check-session <s>..|triage|merge-live|replay <session>|shell}" >&2
+    echo "usage: analysis.sh {features <session>|dataset|datacheck|test (the full suite)|check-session <s>..|triage|merge-live|replay <session>|reproduce {A|B|lstm}|shell}" >&2
     exit 2
     ;;
 esac
