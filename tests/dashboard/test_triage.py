@@ -1,6 +1,8 @@
 """Headline whitelist, the frame-size sensitivity table, the Triage / E page and the incident session filter."""
 import json
 
+import pandas as pd
+
 import pytest
 from conftest import PROV, record, write
 from helpers import run
@@ -264,3 +266,76 @@ class TestBootstrapTab:
         (d / "ci.json").write_text(json.dumps({"intervals": {"xgb": {"f1": {"point": 0.9, "lo": 0.8, "hi": 0.95}}}}))
         tables = self._page(root, monkeypatch)
         assert any(r.get("metric") == "f1" and r.get("point") == 0.9 for t in tables for r in t)
+
+
+class TestExperimentD:
+    def _d(self, exp="D", f1=0.98, d=0.003):
+        m = {}
+        for t, base in (("2", f1), ("6", 0.94), ("19", 0.86)):
+            m.update({f"{t}c_accuracy_mean": 0.99, f"{t}c_accuracy_std": 0.001, f"{t}c_precision_macro_mean": 0.95,
+                      f"{t}c_precision_macro_std": 0.001, f"{t}c_recall_macro_mean": 0.96, f"{t}c_recall_macro_std": 0.001,
+                      f"{t}c_f1_macro_mean": base, f"{t}c_f1_macro_std": 0.002, f"{t}c_f1_macro_minus_published_rf": d})
+        m["2c_f1_attack_mean"], m["2c_f1_attack_std"] = 0.9825, 0.0004
+        return record("xgboost", exp, 0, 0.0, {"seeds": 3}, {"indicative": True, "attacker_excluded_view": "not applicable"}, metrics=m)
+
+    def test_d_is_shown_with_published_rf_and_stays_out_of_headline_and_selection(self, root, monkeypatch):
+        write(root, "expD/xgboost.json", self._d("D"))
+        write(root, "expD/xgboost_noiat.json", self._d("D-drop-iat", f1=0.95, d=-0.03))
+        df = _df(root)
+        t = mv.d_table(df)
+        assert set(t["variant"]) == {"all 45 features", "without IAT"}
+        row = t[(t["variant"] == "all 45 features") & t["task"].str.startswith("2-class")].iloc[0]
+        assert row["F1 (macro)"].startswith("0.980") and row["published RF F1"] == "0.977" and row["F1 minus published RF"] == "+0.003"
+        assert t[t["variant"] == "without IAT"]["F1 minus published RF"].iloc[0] == "-0.030"
+        # not eligible for any headline: D rows never reach A, B, C or the selection
+        h = mv.headline(df, "all", root).set_index("model")
+        assert h.loc["xgboost", "F1"] == "not available" and h.loc["xgboost", "B mean F1"] == "not available"
+        sel = mv.selection(mv.headline(df, "all", root))
+        assert "xgboost" not in sel["classifier"]["scores"]
+        at = run("src/dashboard/pages/2_Model_comparison.py", root, monkeypatch)
+        assert not at.exception, [e.value for e in at.exception]
+        text = " ".join(c.value for c in at.caption)
+        assert "NOT comparable to Experiments A-C" in text
+        tables = [d.value.to_dict("records") for d in at.dataframe]
+        assert any(r.get("variant") == "without IAT" for t_ in tables for r in t_)
+
+    def test_without_d_records_the_tab_says_not_available(self, root, monkeypatch):
+        assert mv.d_table(_df(root)).empty
+        at = run("src/dashboard/pages/2_Model_comparison.py", root, monkeypatch)
+        assert not at.exception
+        assert any("Experiment D: not available" in i.value for i in at.info)
+
+    def test_adding_d_records_changes_neither_the_headline_nor_the_selection(self, root):
+        before = mv.headline(_df(root), "all", root)
+        before_n = {v: mv.headline(_df(root), v, root) for v in ("noatk",)}
+        sel_before = mv.selection(before)
+        write(root, "expD/xgboost.json", self._d("D"))
+        write(root, "expD/xgboost_noiat.json", self._d("D-drop-iat", f1=0.95, d=-0.03))
+        write(root, "expD/random_forest.json", {**self._d("D"), "model": "random_forest"})
+        df = _df(root)
+        pd.testing.assert_frame_equal(before, mv.headline(df, "all", root))
+        pd.testing.assert_frame_equal(before_n["noatk"], mv.headline(df, "noatk", root))
+        assert mv.selection(mv.headline(df, "all", root)) == sel_before
+        # the experiment-A/B/C tables are untouched too
+        assert not mv.a_by_config(df, "all")["model"].isin(["random_forest"]).any()
+        assert mv.b_per_class(df, "all").index.tolist() == mv.b_per_class(_df_without_d(root), "all").index.tolist()
+
+    def test_a_subsampled_record_is_labelled_so_and_the_full_rows_keep_their_labels(self, root):
+        write(root, "expD/random_forest.json", {**self._d("D"), "model": "random_forest"})
+        sub = {**self._d("D-drop-iat", f1=0.9), "model": "random_forest"}
+        sub["tags"] = {**sub["tags"], "train_subsample": 0.25}
+        write(root, "expD/random_forest_noiat_sub25.json", sub)
+        t = mv.d_table(_df(root))
+        assert "all 45 features" in set(t["variant"])
+        assert any(v == "without IAT · 25% train subsample (out-of-memory fallback)" for v in t["variant"])
+        assert not any("subsample" in v for v in t[t["variant"].str.startswith("all")]["variant"])
+
+    def test_the_d_table_shows_no_training_time(self, root):
+        write(root, "expD/xgboost.json", self._d("D"))
+        t = mv.d_table(_df(root))
+        assert not [c for c in t.columns if "train" in c.lower() or "time" in c.lower() or c.endswith("_s")]
+
+
+def _df_without_d(root):
+    d = _df(root)
+    return d[~d["experiment"].astype(str).str.startswith("D")]

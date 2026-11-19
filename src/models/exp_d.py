@@ -1,9 +1,10 @@
 """Experiment D — INDICATIVE benchmark on CICIoMT2024's own feature CSVs + official split (./CLAUDE.md).
 
-    python -m src.models.exp_d [--models xgboost random_forest] [--drop iat] [--for-report]
+    python -m src.models.exp_d [--models xgboost random_forest] [--drop iat] [--raw PATH] [--for-report]
 
-Input : data/raw/ciciomt2024_csv/{train,test}/*.pcap.csv   (CIC's Wi-Fi/MQTT attack CSVs, 45 features,
-        one class per file; downloaded by hand after CIC's registration form)
+Input : data/raw/ciciomt2024/WiFi_and_MQTT/attacks/csv/{train,test}/*.pcap.csv   (CIC's Wi-Fi/MQTT attack CSVs,
+        45 features, one class per file; downloaded after CIC's registration form). --raw PATH points elsewhere
+        (read-only: nothing under data/raw is ever written, moved or copied).
 Output: data/processed/v2/runs/expD/{model}[_noiat].json (+ _details.json)
 
 Why "indicative": these are CIC's features (not our extractor), so the numbers compare our MODEL
@@ -41,7 +42,7 @@ from .. import common
 from . import tracking
 from .train_tree import N_JOBS, V2
 
-RAW = common.ROOT / "data" / "raw" / "ciciomt2024_csv"
+RAW = common.ROOT / "data" / "raw" / "ciciomt2024" / "WiFi_and_MQTT" / "attacks" / "csv"
 OUT = V2 / "runs" / "expD"
 VAL_TAIL = 0.10
 
@@ -115,6 +116,27 @@ def to_arrays(tr, te, feats, tasks):
         c = f"c{t}"
         A["y"][t] = (tr[c].to_numpy()[~val], tr[c].to_numpy()[val], te[c].to_numpy())
     return A
+
+
+def subsample_train(tr, frac, seed=0):
+    """Out-of-memory fallback (pre-authorised): keep a seeded, stratified fraction of the TRAIN rows that are used for fitting
+    (stratified by the 19 classes; the last-10% validation tail is kept whole). Test is NEVER subsampled. Returns (frame, info)."""
+    if not 0 < frac <= 1:
+        raise ValueError("--train-subsample must be in (0, 1]")
+    if frac == 1:
+        return tr, {"train_subsample": 1.0}
+    rng = np.random.default_rng(seed)
+    keep = tr["is_val"].to_numpy(bool).copy()                      # validation tail: all rows
+    fit = ~keep
+    cls = tr["c19"].astype(str).to_numpy()
+    for c in np.unique(cls):
+        idx = np.flatnonzero(fit & (cls == c))
+        n = max(1, int(round(len(idx) * frac)))
+        keep[rng.choice(idx, size=min(n, len(idx)), replace=False)] = True
+    out = tr.loc[keep].reset_index(drop=True)
+    return out, {"train_subsample": float(frac), "train_subsample_seed": seed,
+                 "train_rows_before": int(len(tr)), "train_rows_after": int(len(out)),
+                 "stratified_by": "19 classes; validation tail kept whole; test never subsampled"}
 
 
 def check_complete(tr, te):
@@ -194,13 +216,18 @@ def main():
     ap.add_argument("--tasks", nargs="+", default=["2", "6", "19"], choices=list(N_CLASSES))
     ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--drop", nargs="*", default=[], help="feature names to drop, e.g. IAT")
+    ap.add_argument("--raw", type=Path, default=RAW,
+                    help="folder holding train/ and test/ with CIC's *.pcap.csv files (default: %(default)s)")
+    ap.add_argument("--train-subsample", type=float, default=1.0,
+                    help="out-of-memory fallback: seeded stratified fraction of the TRAIN fit rows (never test); recorded in params/tags")
     ap.add_argument("--allow-partial", action="store_true",
                     help="run even if some classes are missing (smoke test only; never report)")
     ap.add_argument("--for-report", action="store_true")
     ap.add_argument("--no-mlflow", action="store_true")
     args = ap.parse_args()
 
-    tr, te = load_split("train"), load_split("test")
+    raw = args.raw
+    tr, te = load_split("train", raw), load_split("test", raw)
     problems = check_complete(tr, te)
     if problems and not args.allow_partial:
         raise SystemExit("incomplete CIC download: " + "; ".join(problems))
@@ -209,6 +236,7 @@ def main():
     if problems:   # smoke test only: score test on the classes train has seen
         te = te[te["c19"].isin(set(tr["c19"]))].reset_index(drop=True)
         print("PARTIAL DOWNLOAD (smoke test, not reportable):", "; ".join(problems))
+    tr, sub_info = subsample_train(tr, args.train_subsample)
     drop = {d.lower() for d in args.drop}
     meta = {"c19", "c6", "c2", "source_file", "is_val"}
     feats = [c for c in tr.columns if c not in meta and c.lower() not in drop]
@@ -216,6 +244,8 @@ def main():
           f"{len(feats)} features | dropped {sorted(drop) or 'none'} | classes {tr['c19'].nunique()}")
     print("  test rows per 6-cat:", te["c6"].value_counts().to_dict())
     tag = "" if not drop else "_no" + "_".join(sorted(drop)).lower()
+    if args.train_subsample < 1:
+        tag += f"_sub{round(args.train_subsample * 100):d}"
     rows = {"train": len(tr), "test": len(te)}
     files = {"train": sorted(map(str, tr["source_file"].unique())),
              "test": sorted(map(str, te["source_file"].unique()))}
@@ -262,16 +292,19 @@ def main():
             experiment="D" if not drop else f"D-drop-{'-'.join(sorted(drop))}", model=name,
             role="classifier", params={"seeds": args.seeds, "tasks": args.tasks, "dropped": sorted(drop),
                                        "val": f"last {VAL_TAIL:.0%} of each train file",
-                                       "partial": bool(problems)},
+                                       "partial": bool(problems), **sub_info},
             metrics=results, tags={"dataset": "CICIoMT2024 WiFi/MQTT CSV (official split)",
-                                   "details": str(det)},
+                                   "details": str(det), "indicative": True, "raw": str(raw),
+                                   "attacker_excluded_view": "not applicable (no host column in CIC's CSVs)",
+                                   "comparable_to_A_C": False,
+                                   "train_subsample": sub_info["train_subsample"]},
             seed=0, split_path=None, dataset_path=None, for_report=False)
         # provenance for D: the CIC CSVs are the dataset; hash the file list, not one file
         rec["provenance"]["split_file"] = "CIC official train/test folders"
         rec["provenance"]["split_sha256"] = tracking.hashlib.sha256(
             "\n".join(files["train"] + files["test"]).encode()).hexdigest()
         rec["provenance"]["dataset_sha256"] = tracking.hashlib.sha256(
-            "".join(tracking._sha256_file(p) for p in sorted(RAW.rglob("*.csv"))).encode()).hexdigest()
+            "".join(tracking._sha256_file(p) for p in sorted(raw.rglob("*.csv"))).encode()).hexdigest()
         rec["for_report"] = bool(args.for_report)
         tracking.log_run(rec, json_path=str(OUT / f"{name}{tag}.json"), use_mlflow=not args.no_mlflow)
         print(f"[{name}] record -> {OUT / (name + tag + '.json')}")

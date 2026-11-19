@@ -251,6 +251,41 @@ def c_sensitivity(df, view="all"):
     return pd.DataFrame(rows)
 
 
+D_TASKS = (("2", "2-class (benign vs attack)"), ("6", "6 categories"), ("19", "19 classes"))
+
+
+def d_table(df):
+    """Experiment D (indicative): CIC's own feature CSVs and official split, XGBoost / RF, with and without the dropped
+    features. NOT comparable to A-C and never in the headline or the selection. Read straight from the D records
+    (experiment "D", or "D-drop-<feature>" for the leakage re-run); the published RF value is the logged mean minus the logged
+    difference. All-rows only: CIC's CSVs carry no host column, so the attacker-excluded view is not applicable."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    sub = df[df["experiment"].astype(str).str.startswith("D") & df["for_report"] & (df["kind"] == "metrics")]
+    rows = []
+    for _, r in sub.sort_values(["experiment", "model"]).iterrows():
+        variant = "all 45 features" if r["experiment"] == "D" else "without " + r["experiment"][len("D-drop-"):].upper()
+        sub = r.get("train_subsample")
+        if sub is not None and pd.notna(sub) and float(sub) < 1:
+            variant += f" · {float(sub):.0%} train subsample (out-of-memory fallback)"
+        for t, label in D_TASKS:
+            k = f"{t}c_f1_macro_mean"
+            if k not in r or pd.isna(r[k]):
+                continue
+            d = r.get(f"{t}c_f1_macro_minus_published_rf")
+            row = {"model": r["model"], "variant": variant, "task": label,
+                   "accuracy": fmt(r.get(f"{t}c_accuracy_mean"), r.get(f"{t}c_accuracy_std")),
+                   "precision (macro)": fmt(r.get(f"{t}c_precision_macro_mean"), r.get(f"{t}c_precision_macro_std")),
+                   "recall (macro)": fmt(r.get(f"{t}c_recall_macro_mean"), r.get(f"{t}c_recall_macro_std")),
+                   "F1 (macro)": fmt(r[k], r.get(f"{t}c_f1_macro_std")),
+                   "published RF F1": "not available" if d is None or pd.isna(d) else f"{r[k] - d:.3f}",
+                   "F1 minus published RF": "not available" if d is None or pd.isna(d) else f"{d:+.3f}"}
+            if t == "2" and f"2c_f1_attack_mean" in r and pd.notna(r["2c_f1_attack_mean"]):
+                row["attack-class F1 (2-class)"] = fmt(r["2c_f1_attack_mean"], r.get("2c_f1_attack_std"))
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def provenance_table(df):
     """Records behind a table: id, seed, commit, dirty flag, image digest, and whether it counted."""
     cols = ["model", "experiment", "config", "held_out_class", "direction", "seed", "run_name", "git_commit",
