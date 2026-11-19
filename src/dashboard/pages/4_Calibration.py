@@ -18,7 +18,11 @@ for model in loaders.MODELS:
     d = loaders.load_calibration_details(model, root)
     if not d.ok:
         st.markdown(f"**{model}**")
-        ui.na(d.reason, "calibration")
+        skipped = loaders.not_run(model, "calibration")
+        if skipped:                                   # deliberately not run (not "missing"): say so
+            st.info(f"calibration: not run: {skipped}.")
+        else:
+            ui.na(d.reason, "calibration")
         continue
     found = True
     det = d.data
