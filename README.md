@@ -219,6 +219,45 @@ The six verdicts are CLAUDE.md's; the two "Detectors disagree" cells share the s
 or grouping. **PCAP slices contain the lab's plaintext MQTT credentials**: they are written only under the gitignored
 `data/processed/v2/{triage,live}/slices/`; never commit, publish or share them.
 
+### View the dashboard from the results bundle (no data/raw, no PCAPs)
+
+The results bundle (`wardwatch_results_<sha>.zip`, published as a release) holds exactly the files the dashboard reads: run
+records, predictions, calibration and explanation files, bootstrap CIs, the dataset summary and the incident list. It holds **no
+PCAP slices, models, logs or raw data** (PCAP slices contain the lab's plaintext MQTT credentials). In the Incidents page the
+evidence file is therefore shown as "not included in this bundle" together with its recorded SHA-256.
+
+Build it (maintainers; the build stops if it finds a `.pcap`, a credentials-named file, or any username/password from
+`data/raw/creds/accounts.json` in a bundled file; that file is read in memory for the scan only):
+
+```
+python scripts/make_results_bundle.py --out bundle_out      # inside the analysis image, from the repo root
+```
+
+It writes `wardwatch_results_<sha>.zip`, `MANIFEST.sha256` (verify with `sha256sum -c`) and `BUNDLE.json`.
+
+Use it. You need Docker and the dashboard image (`make dashboard-image`, or `docker build -t wardwatch-dashboard:0.1.0
+docker/dashboard`); no other data.
+
+bash:
+```
+unzip wardwatch_results_<sha>.zip -d results
+( cd results && sha256sum -c MANIFEST.sha256 )
+docker run --rm --name wardwatch-dashboard -p 8501:8501 \
+  --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges \
+  -v "$PWD:/work:ro" -v "$PWD/results:/data:ro" -e WARDWATCH_DATA_ROOT=/data \
+  wardwatch-dashboard:0.1.0
+```
+PowerShell:
+```
+Expand-Archive wardwatch_results_<sha>.zip -DestinationPath results
+docker run --rm --name wardwatch-dashboard -p 8501:8501 `
+  --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges `
+  -v "${PWD}:/work:ro" -v "${PWD}/results:/data:ro" -e WARDWATCH_DATA_ROOT=/data `
+  wardwatch-dashboard:0.1.0
+```
+Then open http://localhost:8501. If you work inside a Docker sandbox (`sbx`), the port is not reachable from your browser until
+you publish it from the host: `sbx ports <sandbox-name> --publish 8501:8501`.
+
 **Using the outputs in other modules**
 
 - *Triage / dashboard:* `from src.models.calibrate_explain import CalibratedDetector`, then

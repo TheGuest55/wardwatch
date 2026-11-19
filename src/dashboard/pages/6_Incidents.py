@@ -58,5 +58,11 @@ else:
 st.markdown("**Evidence**")
 status, detail = incidents.verify_hash(row.get("pcap_slice"), row.get("pcap_sha256"), root)
 st.code(f"slice:  {row.get('pcap_slice')}\nsha256: {row.get('pcap_sha256')}")
-{"verified": st.success, "MISMATCH": st.error, "refused": st.error}.get(status, st.info)(
-    f"hash {status}" + ("" if status == "verified" else f": {detail}"))
+from pathlib import Path
+slice_missing = status == "unverified" and "not found" in str(detail)
+if slice_missing and (Path(root) / "BUNDLE.json").exists():          # a results bundle: slices are deliberately left out
+    st.info("evidence file not included in this bundle (PCAP slices hold lab credentials). "
+            f"The recorded sha256 above is the hash of the file in the full data set.")
+else:
+    {"verified": st.success, "MISMATCH": st.error, "refused": st.error}.get(status, st.info)(
+        f"hash {status}" + ("" if status == "verified" else f": {detail}"))
