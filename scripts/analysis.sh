@@ -29,7 +29,9 @@ run() {
 # Every tests/<dir> that holds test_*.py must be listed here (the guard below refuses to run otherwise), so a new
 # test folder can never be silently left out. pipeline, realtime, triage and generation run in the analysis image;
 # dashboard (pytest) runs in the dashboard image. Every folder runs even after one fails; a per-folder line and a
-# TOTAL line are printed; the exit is non-zero if any folder failed, skipped a test, or ran 0 tests.
+# TOTAL line are printed; the exit is non-zero if any folder failed or ran 0 tests, or SKIPPED a test on a full-data checkout. A test that
+# needs data skips only when that data is absent (tests/needs.py names it and the USER_MANUAL level); on a checkout without the full data the
+# skips are reported ("data absent") and are not a failure. With the full data (raw session PCAPs and trained models present) any skip fails.
 SUITE_DIRS="pipeline realtime triage generation dashboard"
 DASH_IMAGE="${DASHBOARD_IMAGE:-wardwatch-dashboard:0.1.0}"
 
@@ -81,7 +83,8 @@ run_suite_dir() {
 
 full_suite() {
   suite_guard || exit 2
-  local d tmp rc ran skipped status failed=0 t_ran=0 t_skip=0 lines=""
+  local d tmp rc ran skipped status failed=0 t_ran=0 t_skip=0 lines="" full=0
+  if [ -d data/raw/sessions/r05/pcap ] && [ -f data/processed/v2/models/expA/xgboost_binary_seed0.json ]; then full=1; fi
   tmp="$(mktemp)"
   for d in $SUITE_DIRS; do
     echo "== tests/$d =="
@@ -94,9 +97,11 @@ full_suite() {
     status=OK
     if [ "$rc" -ne 0 ]; then status="FAILED (exit $rc)"
     elif [ "$ran" -eq 0 ]; then status="FAILED (ran 0 tests)"
-    elif [ "$skipped" -gt 0 ]; then status="FAILED ($skipped skipped)"
+    elif [ "$skipped" -gt 0 ]; then
+      if [ "$full" -eq 1 ]; then status="FAILED ($skipped skipped on a full-data checkout)"
+      else status="OK ($skipped skipped: data absent, see USER_MANUAL)"; fi
     fi
-    case "$status" in OK) ;; *) failed=1 ;; esac
+    case "$status" in OK*) ;; *) failed=1 ;; esac
     t_ran=$((t_ran + ran)); t_skip=$((t_skip + skipped))
     lines="$lines$(printf '%-12s ran %-5s skipped %-3s %s' "$d" "$ran" "$skipped" "$status")"$'\n'
   done

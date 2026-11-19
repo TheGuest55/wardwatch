@@ -10,8 +10,10 @@ import pandas as pd
 from src.models import multiclass_predictions as mp
 from src.models import save_multiclass as smc
 from src.models import train_tree as tt
+from tests.needs import needs
 
 
+@needs("DATASET", "RESULTS", "MODELS")
 class TestMulticlassPredictions(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

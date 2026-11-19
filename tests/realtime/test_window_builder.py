@@ -10,6 +10,7 @@ from src import common
 from src.features import windows
 from src.realtime import check_session as cs
 from src.realtime import stream
+from tests.needs import needs
 from tests.realtime.helpers import IP_ROLES, MACS, T0, synthetic_packets, tcp
 
 ATT, ATT_IP = MACS["c"], "10.0.0.13"
@@ -143,6 +144,7 @@ class TestReplayTimer(unittest.TestCase):
 class TestAgainstStoredSession(unittest.TestCase):
     """Real r05 pcaps (mounted read-only): the streamed rows of fully closed windows equal the stored parquet."""
 
+    @needs("DATASET", "RAW")
     def test_r05_first_15_minutes_equal_the_stored_rows(self):
         rows, wb, st = cs.build_session("r05", max_seconds=900)
         ref = pd.read_parquet(cs.V2 / "sessions" / "r05.parquet")
@@ -188,6 +190,7 @@ class TestCheckSessionReport(unittest.TestCase):
         self.assertEqual(p["parquet_sha256"], {"x": "c" * 64, "y": "d" * 64})
         self.assertTrue(got["all_exact"])
 
+    @needs("DATASET")
     def test_check_result_has_the_real_parquet_hash(self):
         import hashlib
         h = hashlib.sha256((cs.V2 / "sessions" / "r05.parquet").read_bytes()).hexdigest()

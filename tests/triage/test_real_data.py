@@ -14,9 +14,18 @@ from src.features import windows
 from src.models import save_multiclass as smc
 from src.realtime import stream
 from src.triage import offline, verdict as V
+from tests.needs import needs
 from tests.triage import real
 
+FULL = ("DATASET", "RESULTS", "RAW", "MODELS")
 
+
+def needs_missing():
+    from tests import needs as _n
+    return _n.missing(*FULL)
+
+
+@needs("DATASET", "RESULTS", "MODELS")
 class TestSaveMulticlass(unittest.TestCase):
     def test_refit_macro_f1_equals_the_recorded_seed0_value(self):
         mc, classes, ds, metrics = real.fitted()
@@ -30,6 +39,7 @@ class TestSaveMulticlass(unittest.TestCase):
             smc.check_identity({"test_macro_f1": 0.5, "test_macro_f1_traintree": 0.5})
 
 
+@needs(*FULL)
 class TestOfflineAgainstSavedPredictions(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -65,8 +75,9 @@ class TestOfflineAgainstSavedPredictions(unittest.TestCase):
 class TestLiveEqualsOffline(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.pair = real.pair()
+        cls.pair = real.pair() if not needs_missing() else None
 
+    @needs(*FULL)
     def test_replay_at_speed_zero_equals_offline_on_the_same_rows(self):
         cfg = common.load_config()
         roles = common.ip_role_map(cfg)
@@ -112,6 +123,7 @@ class TestLiveEqualsOffline(unittest.TestCase):
         with self.assertRaises(AssertionError):
             run_e.compare_incidents(a, [{**b[0], "n_alerts": 4}])
 
+    @needs(*FULL)
     def test_run_writes_a_record_for_a_short_replay(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)

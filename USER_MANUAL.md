@@ -60,8 +60,8 @@ docker run --rm --network none --cpus 5 -e ANALYSIS_CPUS=5 -v "${PWD}:/work" -v 
 ```
 **Expected:** the tests end with `OK` (the analysis tests that need the full data set are marked as skipped on a fresh clone with only the
 dataset; see "Tests per level"). The reproduce command prints a table of recorded versus reproduced F1 and ends with
-`RESULT A: PASS (10 comparisons, ...)`. Reproduction compares against the recorded results in `data/processed/v2/runs/`, which the results zip (Level 1) provides:
-unzip the results zip's `runs/` into `data/processed/v2/runs/` first (see Level 2).
+`RESULT A: PASS (10 comparisons, ...)`. Reproduction compares against the recorded results in `data/processed/v2/runs/`, which the results zip (Level 1) provides: extract the whole results zip into
+`data/processed/v2/` before the reproduce command (exact commands in Level 2, section 3). Without it the reproduce command reports FAIL ("no recorded run").
 
 ---
 
@@ -118,8 +118,12 @@ data/processed/v2/feature_list.json
 data/processed/v2/sessions/*.parquet
 data/raw/sessions/split_v2.json
 ```
-The dataset contains no run records and no raw PCAPs. The recorded results to compare with come from the results zip: extract its `runs/` folder to
-`data/processed/v2/runs/`.
+The dataset contains no run records and no raw PCAPs. The recorded results to compare with come from the results zip (Level 1). Extract the **whole zip into `data/processed/v2/`**, so that the recorded run
+records sit at `data/processed/v2/runs/` (the reproduce commands read `data/processed/v2/runs/expA/<model>_s0.json`, `expB/...` and `lstm/A_k12_h32_s0.json`):
+
+bash: `unzip -o results.zip -d data/processed/v2`   PowerShell: `Expand-Archive results.zip -DestinationPath data/processed/v2 -Force`
+
+(The zip also holds `testbed_windows.parquet`, `live/incidents.jsonl`, `MANIFEST.sha256` and `BUNDLE.json`; the parquet is the same file as in the dataset zip.)
 (Release hashes to check: `<DATASET_SHA256>` for the zip; to be filled in once the release check is done.)
 
 **Build the analysis image** (about 6 minutes, about 4 GB; the only step that needs the network):
@@ -179,7 +183,22 @@ PowerShell users: `make` needs a Windows port; use WSL or Git Bash for this leve
 
 ## 6. Tests per level
 
-(To be filled in from the measured skip counts: step 4.)
+`bash scripts/analysis.sh test` runs five test folders. A test that needs data **skips only when that data is absent**, and says what is missing and which
+level of this manual provides it; with the data present the test runs unchanged. On a checkout **without** the full data the skips are reported ("data absent")
+and are not a failure; on a **full-data** checkout (raw session PCAPs and trained models present) any skip fails the run, so a full-data suite is 483 run, 0 skipped.
+
+Measured (19 Nov, `bash scripts/analysis.sh test`, wardwatch-analysis:0.2.0 and wardwatch-dashboard:0.1.0):
+
+| What you have | pipeline | realtime | triage | generation | dashboard | TOTAL run | skipped |
+|---|---|---|---|---|---|---|---|
+| fresh clone, no data | 283 run, 12 skipped | 18 run, 2 skipped | 44 run, 8 skipped | 50 run, 0 | 88 run, 4 skipped | 483 | 26 |
+| plus the v2 dataset (Level 2) | 283 run, 11 skipped | 18 run, 1 skipped | 44 run, 8 skipped | 50 run, 0 | 88 run, 4 skipped | 483 | 24 |
+| plus the results zip (Level 1 and 2) | 283 run, 11 skipped | 18 run, 1 skipped | 44 run, 8 skipped | 50 run, 0 | 88 run, 4 skipped | 483 | 24 |
+| full data (the authors' checkout: raw PCAPs, models, credentials file) | 283 run, 0 skipped | 18 run, 0 skipped | 44 run, 0 skipped | 50 run, 0 | 88 run, 0 skipped | 483 | 0 |
+
+The results zip adds no running tests: the tests that read recorded runs also need the trained models or the raw PCAPs (Level 3 material, not published). The 24
+skipped tests at Level 2 need, by their skip messages: the raw session PCAPs, the raw session ground truth, the trained model files, the lab credentials file (the
+bundle build tests) or CICIoMT2024's feature CSVs (section 5). Run `python -m unittest ... -v` (inside the image) to see every skip message.
 
 ## 7. Troubleshooting
 
@@ -190,6 +209,7 @@ PowerShell users: `make` needs a Windows port; use WSL or Git Bash for this leve
 | `port is already allocated` or the page does not open | another process uses 8501: use `-p 8502:8501`. Inside an `sbx` sandbox, publish the port from the host (`sbx ports <name> --publish 8501:8501`). |
 | `docker build` takes a long time or fills the disk | the analysis image is about 4 GB and takes about 6 minutes; free space with `docker builder prune`. |
 | the tests report data files not found | the v2 dataset or the results `runs/` folder is not at the path in Level 2; the layout must match exactly. |
+| the tests print `skipped` | normal without the full data: each skip names what is missing and the level that provides it (section 6). |
 | `scripts/analysis.sh` says `no such image` | the script builds `wardwatch-analysis:0.2.0` itself the first time it is missing; or build it as in Level 2. |
 | a worktree or clone shows no `data/` | `data/` is not in git. Download the releases as above. |
 

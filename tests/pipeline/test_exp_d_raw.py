@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from src.models import exp_d
+from tests.needs import needs
 
 
 def write_tree(root, n=40, classes=("Benign", "ARP_Spoofing", "TCP_IP-DDoS-SYN1", "TCP_IP-DDoS-SYN2", "MQTT-DoS-Connect_Flood")):
@@ -22,6 +23,7 @@ def write_tree(root, n=40, classes=("Benign", "ARP_Spoofing", "TCP_IP-DDoS-SYN1"
 
 
 class TestPathAndLabels(unittest.TestCase):
+    @needs("CIC_CSV")
     def test_default_raw_points_at_the_real_csv_folder(self):
         self.assertTrue(str(exp_d.RAW).endswith("ciciomt2024/WiFi_and_MQTT/attacks/csv"))
         self.assertTrue((exp_d.RAW / "train").is_dir() and (exp_d.RAW / "test").is_dir())
