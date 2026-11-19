@@ -97,7 +97,8 @@ class TestNotApplicable:
         for m in ("autoencoder", "isolation_forest", "rule_baseline"):
             pass
         assert sum("calibration: not applicable" in i for i in info) == 3
-        assert sum(i.startswith("calibration: not available") for i in info) == 3     # xgboost, random_forest, lstm: just no data
+        assert sum(i.startswith("calibration: not available") for i in info) == 2     # xgboost, random_forest: just no data
+        assert sum(i == "calibration: not run: the LSTM is not the deployed classifier." for i in info) == 1
 
     def _curves(self, root, monkeypatch, model):
         n = 6
@@ -233,5 +234,33 @@ class TestMulticlassConfusionFromTheSeed0File:
         vals = {m.label: m.value for m in at.metric}
         assert vals == {"Method": "isotonic", "ECE raw": "0.0176", "ECE calibrated": "0.0013"}
         info = [i.value for i in at.info]
-        assert sum(i.startswith("calibration: not available") for i in info) == 2        # random_forest, lstm
+        assert sum(i.startswith("calibration: not available") for i in info) == 1        # random_forest: no data
+        assert sum(i.startswith("calibration: not run:") for i in info) == 1             # lstm: deliberately not run
         assert sum("calibration: not applicable" in i for i in info) == 3                # autoencoder, IF, rule baseline
+
+
+class TestNotRunState:
+    def test_helper_only_marks_the_lstm_calibration(self):
+        assert loaders.not_run("lstm", "calibration") == "the LSTM is not the deployed classifier"
+        for m in ("xgboost", "random_forest", "autoencoder", "isolation_forest", "rule_baseline"):
+            assert loaders.not_run(m, "calibration") is None
+        assert loaders.not_run("lstm", "macro_f1") is None
+
+    def test_the_other_two_states_keep_their_wording(self, root, monkeypatch):
+        at = run("src/dashboard/pages/4_Calibration.py", root, monkeypatch)
+        assert not at.exception, [e.value for e in at.exception]
+        info = [i.value for i in at.info]
+        assert sum("calibration: not applicable. no probability" in i for i in info) == 3        # AE, IF, rule baseline: unchanged
+        assert any(i.startswith("calibration: not available. random_forest") for i in info)       # data missing: unchanged
+        assert not any("lstm_details.json" in i for i in info)                                    # the old LSTM wording is gone
+
+    def test_a_logged_lstm_calibration_would_still_be_shown(self, root, monkeypatch):
+        import json
+        bins = [{"lo": 0.0, "hi": 1.0, "n": 10, "mean_predicted": 0.2, "observed_attack_rate": 0.1}]
+        d = root / "runs" / "calibration"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "lstm_details.json").write_text(json.dumps({"calibration_method": "isotonic",
+            "reliability_test_raw": {"ece": 0.02, "bins": bins}, "reliability_test_calibrated": {"ece": 0.01, "bins": bins}}))
+        at = run("src/dashboard/pages/4_Calibration.py", root, monkeypatch)
+        assert not at.exception
+        assert not any("not run" in i.value for i in at.info)

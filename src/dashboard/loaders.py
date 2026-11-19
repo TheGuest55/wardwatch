@@ -40,6 +40,16 @@ def not_applicable(model, what):
     return NOT_APPLICABLE[what] if ROLE_OF.get(model) in NOT_APPLICABLE_ROLES else None
 
 
+# A third state, neither "not applicable" (by design) nor "not available" (data missing): the work was deliberately not run. calibrate_explain
+# supports the tree models only (its GRIDS) and calibration exists for the triage verdicts, which use the deployed classifier (XGBoost).
+NOT_RUN = {("lstm", "calibration"): "the LSTM is not the deployed classifier"}
+
+
+def not_run(model, what):
+    """The one-line reason `what` was deliberately not run for `model`, else None."""
+    return NOT_RUN.get((model, what))
+
+
 # params that define a configuration (as opposed to a seed or a measured value)
 CONFIG_KEYS = ("k", "hidden", "use_presence")
 VIEW_PREFIX = {"all": "all", "noatk": "noatk"}   # "all rows" / "attacker host excluded"
