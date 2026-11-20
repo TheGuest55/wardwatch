@@ -79,3 +79,10 @@ def preds_root(root):
         "p_benign": 0.5, "p_arp_mitm": 0.5})
     df.to_parquet(d / "A_k12_h32_s0.parquet")
     return root
+
+
+@pytest.fixture(autouse=True)
+def _isolate_results_root(monkeypatch, tmp_path_factory):
+    """The loaders also search <repo>/results/runs (the unzipped results bundle of USER_MANUAL Level 1). Point that
+    extra directory at an empty one so no test sees real run records, whatever has been unzipped next to the code."""
+    monkeypatch.setenv("WARDWATCH_RESULTS_ROOT", str(tmp_path_factory.mktemp("no_results")))
