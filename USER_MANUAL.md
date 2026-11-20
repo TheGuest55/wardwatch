@@ -55,13 +55,28 @@ PowerShell:
 git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git; cd wardwatch
 Invoke-WebRequest -Uri "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/wardwatch-v2-dataset.zip" -OutFile v2.zip; Expand-Archive v2.zip -DestinationPath . -Force
 docker build --pull --build-arg "GIT_COMMIT=$(git rev-parse HEAD)" -t wardwatch-analysis:0.2.0 services/analysis
-docker run --rm --network none -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 python -m unittest discover -s tests/pipeline -p "test_*.py"
+docker run --rm --network none -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 sh -c "python -m unittest discover -s tests/pipeline -p 'test_*.py'; python -m unittest discover -s tests/realtime -t . -p 'test_*.py'; python -m unittest discover -s tests/triage -t . -p 'test_*.py'; PYTHONPATH=services/shared:services/devices:services/attacker:scripts python -m unittest discover -s tests/generation -p 'test_*.py'"
 docker run --rm --network none --cpus 5 -e ANALYSIS_CPUS=5 -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 python -m src.reproduce A
 ```
-**Expected:** the tests end with `OK` (the analysis tests that need the full data set are marked as skipped on a fresh clone with only the
-dataset; see "Tests per level"). The reproduce command prints a table of recorded versus reproduced F1 and ends with
-`RESULT A: PASS (10 comparisons, ...)`. Reproduction compares against the recorded results in `data/processed/v2/runs/`, which the results zip (Level 1) provides: extract the whole results zip into
-`data/processed/v2/` before the reproduce command (exact commands in Level 2, section 3). Without it the reproduce command reports FAIL ("no recorded run").
+**Expected.** With only the code and the v2 dataset, `bash scripts/analysis.sh test` ends with this summary (the dashboard folder needs the dashboard image from Level 1; the
+skips are tests that need data that is not published, each skip message says which; section 6):
+
+```
+pipeline     ran 283   skipped 11  OK (11 skipped: data absent, see USER_MANUAL)
+realtime     ran 18    skipped 1   OK (1 skipped: data absent, see USER_MANUAL)
+triage       ran 44    skipped 8   OK (8 skipped: data absent, see USER_MANUAL)
+generation   ran 50    skipped 0   OK
+dashboard    ran 88    skipped 4   OK (4 skipped: data absent, see USER_MANUAL)
+TOTAL        ran 483   skipped 24  OK
+```
+The PowerShell form runs the four analysis-image folders only: each unittest run ends with `OK` (with `skipped=...` where data is absent; 283 + 18 + 44 + 50 tests).
+The reproduce command prints a table of recorded versus reproduced F1 and ends with `RESULT A: PASS (10 comparisons, ...)`. Reproduction compares against the recorded results in
+`data/processed/v2/runs/`, which the results zip (Level 1) provides: extract the whole results zip into `data/processed/v2/` before the reproduce command (exact commands in
+Level 2, section 3). Without it the reproduce command reports FAIL ("no recorded run").
+
+If `git clone` fails with `Repository not found` or asks for a username and password, the repository is private. Ask the team for access and sign in (`gh auth login`, or use a
+GitHub personal access token as the password), or ask for the code as a zip. (Whether and when the repository becomes public is decided by the team; this line is
+updated then.)
 
 ---
 
@@ -136,7 +151,7 @@ attacker host excluded) with the recorded run, prints PASS or FAIL with the tole
 
 | Command (bash) | PowerShell | What it retrains | Time |
 |---|---|---|---|
-| `bash scripts/analysis.sh reproduce A` (or `make reproduce-A`) | `docker run ... python -m src.reproduce A` | Experiment A, seed 0: XGBoost, Random Forest, Isolation Forest, autoencoder, rule baseline | about 2 min |
+| `bash scripts/analysis.sh reproduce A` (or `make reproduce-A`) | the PowerShell form below, with `A` | Experiment A, seed 0: XGBoost, Random Forest, Isolation Forest, autoencoder, rule baseline | about 2 min |
 | `bash scripts/analysis.sh reproduce B` (or `make reproduce-B`) | `... python -m src.reproduce B` | Experiment B, seed 0, two held-out classes (recon_scan = easy, spoof_vitals = hard): XGBoost, Isolation Forest, rule baseline | about 1 min |
 | `bash scripts/analysis.sh reproduce lstm` (or `make reproduce-lstm`) | `... python -m src.reproduce lstm` | the LSTM, seed 0, the selected configuration (k=12, hidden 32) | about 2 min |
 
