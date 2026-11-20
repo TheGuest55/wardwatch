@@ -107,9 +107,9 @@ def load_expected(path=EXPECTED_DEFAULT):
     return d
 
 
-def check_dataset(expected, dataset_file=DATASET_FILE):
+def check_dataset(expected, dataset_file=None):
     """FAIL 'wrong dataset' (SystemExit, before any training) unless the local testbed_windows.parquet is the one the results were made on."""
-    p = Path(dataset_file)
+    p = Path(dataset_file if dataset_file is not None else DATASET_FILE)
     if not p.exists():
         raise SystemExit(f"[reproduce] FAIL: {p} not found. Download the v2 dataset release first (USER_MANUAL Level 2).")
     got = sha256_file(p)
