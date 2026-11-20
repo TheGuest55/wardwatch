@@ -80,8 +80,8 @@ pipeline     ran 294   skipped 12  OK (12 skipped: data absent, see USER_MANUAL)
 realtime     ran 18    skipped 1   OK (1 skipped: data absent, see USER_MANUAL)
 triage       ran 44    skipped 8   OK (8 skipped: data absent, see USER_MANUAL)
 generation   ran 50    skipped 0   OK
-dashboard    ran 88    skipped 4   OK (4 skipped: data absent, see USER_MANUAL)
-TOTAL        ran 494   skipped 25  OK
+dashboard    ran 90    skipped 4   OK (4 skipped: data absent, see USER_MANUAL)
+TOTAL        ran 496   skipped 25  OK
 ```
 The PowerShell form runs the four analysis-image folders only: each unittest run ends with `OK` (with `skipped=...` where data is absent; 294 + 18 + 44 + 50 tests).
 
@@ -234,16 +234,16 @@ PowerShell users: `make` needs a Windows port; use WSL or Git Bash for this leve
 
 `bash scripts/analysis.sh test` runs five test folders. A test that needs data **skips only when that data is absent**, and says what is missing and which
 level of this manual provides it; with the data present the test runs unchanged. On a checkout **without** the full data the skips are reported ("data absent")
-and are not a failure; on a **full-data** checkout (raw session PCAPs and trained models present) any skip fails the run, so a full-data suite is 494 run, 0 skipped.
+and are not a failure; on a **full-data** checkout (raw session PCAPs and trained models present) any skip fails the run, so a full-data suite is 496 run, 0 skipped.
 
 Measured (19 Nov, `bash scripts/analysis.sh test`, wardwatch-analysis:0.2.0 and wardwatch-dashboard:0.1.0):
 
 | What you have | pipeline | realtime | triage | generation | dashboard | TOTAL run | skipped |
 |---|---|---|---|---|---|---|---|
-| fresh clone, no data | 294 run, 13 skipped | 18 run, 2 skipped | 44 run, 8 skipped | 50 run, 0 | 88 run, 4 skipped | 494 | 27 |
-| plus the v2 dataset (Level 2) | 294 run, 12 skipped | 18 run, 1 skipped | 44 run, 8 skipped | 50 run, 0 | 88 run, 4 skipped | 494 | 25 |
-| plus the results zip (Level 1; adds no tests) | 294 run, 12 skipped | 18 run, 1 skipped | 44 run, 8 skipped | 50 run, 0 | 88 run, 4 skipped | 494 | 25 |
-| full data (the authors' checkout: raw PCAPs, models, credentials file) | 294 run, 0 skipped | 18 run, 0 skipped | 44 run, 0 skipped | 50 run, 0 | 88 run, 0 skipped | 494 | 0 |
+| fresh clone, no data | 294 run, 13 skipped | 18 run, 2 skipped | 44 run, 8 skipped | 50 run, 0 | 90 run, 4 skipped | 496 | 27 |
+| plus the v2 dataset (Level 2) | 294 run, 12 skipped | 18 run, 1 skipped | 44 run, 8 skipped | 50 run, 0 | 90 run, 4 skipped | 496 | 25 |
+| plus the results zip (Level 1; adds no tests) | 294 run, 12 skipped | 18 run, 1 skipped | 44 run, 8 skipped | 50 run, 0 | 90 run, 4 skipped | 496 | 25 |
+| full data (the authors' checkout: raw PCAPs, models, credentials file) | 294 run, 0 skipped | 18 run, 0 skipped | 44 run, 0 skipped | 50 run, 0 | 90 run, 0 skipped | 496 | 0 |
 
 The results zip adds no running tests: the tests that read recorded runs also need the trained models or the raw PCAPs (Level 3 material, not published). The 25
 skipped tests at Level 2 need, by their skip messages: the raw session PCAPs, the raw session ground truth, the trained model files, the lab credentials file (the
