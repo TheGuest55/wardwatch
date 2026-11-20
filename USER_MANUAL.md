@@ -28,7 +28,7 @@ wardwatch-submission/
 have access: those commands are in the box "If you have access to the private repository" at the end of this section.)
 
 Run every command from the folder named in the first line of the block. **Check each zip against its hash before you use it**:
-the results zip must have SHA-256 `<RESULTS_ZIP_SHA256>` and the dataset zip `b455fd8468f9d04c8550eb0b8138ece971f54d9eb1f4ac95ff7ef6f9a01d1387` (the results hash is filled in when that zip is published; see "Downloads" under Level 1 and
+the results zip must have SHA-256 `<RESULTS_ZIP_SHA256>` and the dataset zip `e2d3ea557eb48554ac263e63dfd3be0e548e8dec8662baff531b9cfc2b14d87e` (the results hash is filled in when that zip is published; see "Downloads" under Level 1 and
 Level 2). bash: `sha256sum <file>`. PowerShell: `Get-FileHash <file> -Algorithm SHA256`.
 
 ### Level 1 in 5 commands (view the results)
@@ -114,8 +114,10 @@ normal for a private repository; use the submission package.
 ## 1. Requirements
 
 - **Docker** (Docker Desktop on Windows or macOS, Docker Engine on Linux) with at least **8 GB of memory** for Docker (**10 GB** for Experiment D).
-  In Docker Desktop: Settings, Resources. Disk: about 4 GB for the analysis image, 1 GB for the dashboard image, about 1 GB for the v2 dataset, up to
-  10 GB with CIC data. Confirm with `docker --version` and `docker info`.
+  In Docker Desktop: Settings, Resources. Disk: **at least 15 GB free for Docker** (the images are about 5.3 GB: 4 GB analysis, 1.3 GB dashboard; the rest is build cache and room for the tests,
+  which write a temporary 300 MB file), about 1 GB for the v2 dataset, up to 10 GB with CIC data. Confirm with `docker --version` and `docker info`.
+- **Internet access for the image builds.** `docker build` of the analysis image downloads packages from Debian and PyPI, and the dashboard image from PyPI; the base image comes from Docker Hub.
+  Everything after the builds runs with the network off.
 - **git** is needed only for the private-repository route (it is not needed for the submission package). Keep line endings LF: clone with `-c core.autocrlf=input` (or run
   `git config --global core.autocrlf input` before cloning). Windows checkouts with CRLF break the shell scripts (`bash\r: command not found`; see Troubleshooting). When you unzip the
   submission package on Windows, use a tool that keeps the files as they are (Expand-Archive does).
@@ -163,11 +165,12 @@ are never published; the page shows the recorded hash and this message instead. 
 data/processed/v2/testbed_windows.parquet
 data/processed/v2/feature_list.json
 data/processed/v2/sessions/*.parquet
+data/processed/v2/ground_truth/<session>/ground_truth.jsonl     (sanitised: class, run id, interval, attacker ip/mac)
 data/raw/sessions/split_v2.json
 ```
 The dataset contains no run records and no raw PCAPs. **Level 2 needs nothing else**: not the results zip and not the run records. What your run is compared
 with is `reproduce/expected.json`, committed in the repository (see below).
-(Release hashes to check: `b455fd8468f9d04c8550eb0b8138ece971f54d9eb1f4ac95ff7ef6f9a01d1387` for the zip. The file inside it that matters, `testbed_windows.parquet`, must have the
+(Release hashes to check: `e2d3ea557eb48554ac263e63dfd3be0e548e8dec8662baff531b9cfc2b14d87e` for the zip. The file inside it that matters, `testbed_windows.parquet`, must have the
 SHA-256 `58b3e6b6341521d9a4a58a393679766dfa05e2b92363125f6fb5b721d87e29a6`; `reproduce` checks this itself before training.)
 
 **Build the analysis image** (about 6 minutes, about 4 GB; the only step that needs the network):
@@ -187,7 +190,7 @@ if your `testbed_windows.parquet` has a different SHA-256. It never reads `runs/
 |---|---|---|---|
 | `bash scripts/analysis.sh reproduce A` (or `make reproduce-A`) | the PowerShell form below, with `A` | Experiment A, seed 0: XGBoost, Random Forest, Isolation Forest, autoencoder, rule baseline | about 3 min (30 comparisons) |
 | `bash scripts/analysis.sh reproduce B` (or `make reproduce-B`) | `... python -m src.reproduce B` | Experiment B, seed 0, two held-out classes (recon_scan = easy, spoof_vitals = hard): XGBoost, Isolation Forest, rule baseline | about 1 min (36 comparisons) |
-| `bash scripts/analysis.sh reproduce lstm` (or `make reproduce-lstm`) | `... python -m src.reproduce lstm` | the LSTM, seed 0, the configuration in expected.json (k=12, hidden 32). **Needs the raw session ground truth (`data/raw/sessions/<S>/ground_truth.jsonl`), which is not in the dataset release** (it names lab accounts): without it the command stops at once and says so; it runs on the authors' full-data checkout (Level 3 material) | about 2 min |
+| `bash scripts/analysis.sh reproduce lstm` (or `make reproduce-lstm`) | `... python -m src.reproduce lstm` | the LSTM, seed 0, the configuration in expected.json (k=12, hidden 32). It labels boundary windows from the **sanitised ground truth** in the dataset zip (class, run id, interval and attacker address only; the raw files name lab accounts and are not published), or from the raw files when they are present: both give identical labels (tested) | about 2 min |
 
 PowerShell form of any of them (replace `A` by `B` or `lstm`):
 ```powershell
@@ -257,9 +260,10 @@ bundle build tests) or CICIoMT2024's feature CSVs (section 5). Run `python -m un
 | a training run ends with `Killed` or exit code 137 | Docker ran out of memory. Raise Docker's memory (Settings, Resources) to 8 GB, or 10 GB for Experiment D. |
 | `port is already allocated` or the page does not open | another process uses 8501: use `-p 8502:8501`. Inside an `sbx` sandbox, publish the port from the host (`sbx ports <name> --publish 8501:8501`). |
 | `docker build` takes a long time or fills the disk | the analysis image is about 4 GB and takes about 6 minutes; free space with `docker builder prune`. |
+| `No space left on device` (in a build, a test or a training run) | Docker's own disk is full: keep at least 15 GB free for Docker (Docker Desktop: Settings, Resources, Disk image size). `docker builder prune` removes the build cache; `docker system df` shows what uses the space. |
 | the tests report data files not found | the v2 dataset is not at the path in Level 2; the layout must match exactly. |
 | `reproduce` prints `FAIL: wrong dataset` | your `testbed_windows.parquet` is not the file the expected numbers were made on: download the v2 dataset release again and extract it at the repository root. |
-| `reproduce lstm` stops with `cannot run the LSTM target` | the LSTM needs the raw session ground truth, which the dataset release does not contain; use `reproduce A` and `reproduce B` (section 3). |
+| `reproduce lstm` stops with `cannot run the LSTM target` | the sanitised ground truth `data/processed/v2/ground_truth/<session>/ground_truth.jsonl` is missing: it is part of the v2 dataset zip, so extract that zip again at the root of the `code` folder (an older copy of the zip lacks it). |
 | the tests print `skipped` | normal without the full data: each skip names what is missing and the level that provides it (section 6). |
 | `scripts/analysis.sh` says `no such image` | the script builds `wardwatch-analysis:0.2.0` itself the first time it is missing; or build it as in Level 2. |
 | a worktree or clone shows no `data/` | `data/` is not in git. Download the releases as above. |

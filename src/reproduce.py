@@ -217,15 +217,18 @@ def run_B(out, expected, models=B_MODELS, classes=B_CLASSES):
 
 
 def check_ground_truth(split_file=SPLIT_FILE, sessions_dir=None):
-    """The LSTM's sequence builder reads each session's ground_truth.jsonl (data/raw/sessions/<S>/): the dataset release does not contain them
-    (they name lab accounts, so they are not published). Say so before any work instead of failing deep inside the builder."""
-    sessions_dir = Path(sessions_dir) if sessions_dir else Path(split_file).parent
-    split = json.loads(Path(split_file).read_text())
-    missing = sorted(f"{s}" for names in split.values() for s in names if not (sessions_dir / s / "ground_truth.jsonl").exists())
+    """The LSTM's sequence builder needs each session's ground truth: the raw data/raw/sessions/<S>/ground_truth.jsonl (authors) or the
+    sanitised copy in the dataset release, data/processed/v2/ground_truth/<S>/ground_truth.jsonl. Say so before any work if neither is complete."""
+    from .models import sequence as seq
+    split_file = Path(split_file)
+    split = json.loads(split_file.read_text())
+    names = sorted({s for v in split.values() for s in v})
+    base = Path(sessions_dir) if sessions_dir else seq.default_ground_truth_dir(split_file, split)
+    missing = [s for s in names if not (base / s / "ground_truth.jsonl").exists()]
     if missing:
-        raise SystemExit(f"[reproduce] cannot run the LSTM target: data/raw/sessions/<session>/ground_truth.jsonl is missing for {missing}. "
-                         f"The v2 dataset release does not contain the raw ground truth (it names lab accounts); the LSTM needs it to label "
-                         f"boundary windows (USER_MANUAL Level 3). Experiments A and B (reproduce A, reproduce B) do not need it.")
+        raise SystemExit(f"[reproduce] cannot run the LSTM target: no ground truth for {missing}. It needs data/processed/v2/ground_truth/<session>/ground_truth.jsonl "
+                         f"(part of the v2 dataset release; extract the release again) or the raw data/raw/sessions/<session>/ground_truth.jsonl (USER_MANUAL Level 3). "
+                         f"Experiments A and B (reproduce A, reproduce B) do not need it.")
 
 
 def run_lstm(out, threads, expected):

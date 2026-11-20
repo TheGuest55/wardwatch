@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from . import data as mdata
+from .. import common
 from ..labels import label as labelling
 
 SPLITS = mdata.SPLITS
@@ -77,13 +78,32 @@ def exclusion_classes(df, ground_truth_dir):
     return out
 
 
+V2_GT_DIR = common.PROCESSED_DIR / "v2" / "ground_truth"
+
+
+def default_ground_truth_dir(split_path, split_map=None):
+    """Where the per-session ground truth is read from when no folder is given: the raw sessions folder (next to split_v2.json) when it
+    holds every session's ground_truth.jsonl (the authors' checkout), else the sanitised copy published with the dataset
+    (data/processed/v2/ground_truth/<session>/ground_truth.jsonl, written by scripts/make_sanitised_gt.py), else the raw folder."""
+    raw = Path(split_path).parent
+    if split_map is None:
+        split_map = json.loads(Path(split_path).read_text())
+    names = sorted({s for v in split_map.values() for s in v})
+    if all((raw / s / "ground_truth.jsonl").exists() for s in names):
+        return raw
+    san = V2_GT_DIR
+    if all((san / s / "ground_truth.jsonl").exists() for s in names):
+        return san
+    return raw
+
+
 def load_sessions(sessions_dir, split_path, ground_truth_dir=None):
     """Read every per-session parquet listed in split_v2.json and assign its `split` from that file
     (the per-session parquets have no split column). Asserts the splits do not overlap. Adds the
     metadata column `exclusion_class` from the read-only ground truth in `ground_truth_dir`
     (default: the folder holding split_path, i.e. data/raw/sessions/<session>/ground_truth.jsonl)."""
     split_map = json.loads(Path(split_path).read_text())
-    gt_dir = Path(ground_truth_dir) if ground_truth_dir else Path(split_path).parent
+    gt_dir = Path(ground_truth_dir) if ground_truth_dir else default_ground_truth_dir(split_path, split_map)
     seen = {}
     for split, sessions in split_map.items():
         for s in sessions:
