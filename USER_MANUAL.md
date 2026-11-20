@@ -15,50 +15,62 @@ Every command is given for **bash** (Linux, macOS, Git Bash, WSL) and **PowerShe
 
 ## Quick start
 
-> Replace the `<...>` placeholders with the names on the GitHub release pages (see "Downloads" under each level). Run everything from the
-> repository root. The results and dataset downloads are release assets of <https://github.com/TheGuest55/wardwatch/releases>
-> (tags `results-v1` and `v2-dataset`).
+**Your starting point is the submission package** (no GitHub account or access is needed): a folder that holds the code and a `release/` folder with the two zip files.
+
+```
+wardwatch-submission/
+  code/       the repository (this manual is code/USER_MANUAL.md)
+  release/    <RESULTS_ZIP> (the results, Level 1)  and  <DATASET_ZIP> (the v2 dataset, Level 2)
+```
+(`<RESULTS_ZIP>` and `<DATASET_ZIP>` stand for the two file names in `release/`; use the names you find there. The repository is private, so `git clone` and the GitHub release
+download links only work for people who have access: those commands are in the box "If you have access to the private repository" at the end of this section.)
+
+Run every command from the folder named in the first line of the block. **Check each zip against the hash in this manual before you use it**:
+the results zip `<RESULTS_ZIP>` must have SHA-256 `853db3c1818d43091ffef5ff77a4401a8315dc99bffe421027e16c23546e7e74` and the dataset zip `<DATASET_ZIP>` must have `<DATASET_SHA256>`
+(to be filled in; see "Downloads" under Level 1 and Level 2). bash: `sha256sum <file>`. PowerShell: `Get-FileHash <file> -Algorithm SHA256`.
 
 ### Level 1 in 5 commands (view the results)
 
 bash:
 ```bash
-git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git && cd wardwatch
-curl -L -o results.zip "https://github.com/TheGuest55/wardwatch/releases/download/results-v1/<RESULTS_ASSET>.zip"
-unzip results.zip -d results
+cd wardwatch-submission/code
+sha256sum ../release/<RESULTS_ZIP>
+unzip ../release/<RESULTS_ZIP> -d results
 docker build -t wardwatch-dashboard:0.1.0 docker/dashboard
 docker run --rm --name wardwatch-dashboard -p 8501:8501 --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges -v "$PWD:/work:ro" -v "$PWD/results:/data:ro" -e WARDWATCH_DATA_ROOT=/data wardwatch-dashboard:0.1.0
 ```
 PowerShell:
 ```powershell
-git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git; cd wardwatch
-Invoke-WebRequest -Uri "https://github.com/TheGuest55/wardwatch/releases/download/results-v1/<RESULTS_ASSET>.zip" -OutFile results.zip
-Expand-Archive results.zip -DestinationPath results
+cd wardwatch-submission/code
+Get-FileHash ../release/<RESULTS_ZIP> -Algorithm SHA256
+Expand-Archive ../release/<RESULTS_ZIP> -DestinationPath results
 docker build -t wardwatch-dashboard:0.1.0 docker/dashboard
 docker run --rm --name wardwatch-dashboard -p 8501:8501 --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges -v "${PWD}:/work:ro" -v "${PWD}/results:/data:ro" -e WARDWATCH_DATA_ROOT=/data wardwatch-dashboard:0.1.0
 ```
-**Expected:** the container prints `You can now view your Streamlit app in your browser.` Open <http://localhost:8501>: the Overview page shows
+**Expected:** the first command prints the results hash above (compare it). The last prints `You can now view your Streamlit app in your browser.` Open <http://localhost:8501>: the Overview page shows
 a headline table with six models (XGBoost, Random Forest, autoencoder, Isolation Forest, LSTM, rule baseline). Stop with Ctrl+C.
 
 ### Level 2 in 5 commands (reproduce)
 
 bash:
 ```bash
-git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git && cd wardwatch
-curl -L -o v2.zip "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/wardwatch-v2-dataset.zip" && unzip -o v2.zip
-docker build --pull --build-arg "GIT_COMMIT=$(git rev-parse HEAD)" -t wardwatch-analysis:0.2.0 services/analysis
+cd wardwatch-submission/code
+sha256sum ../release/<DATASET_ZIP> && unzip -o ../release/<DATASET_ZIP>
+docker build --pull -t wardwatch-analysis:0.2.0 services/analysis
 bash scripts/analysis.sh test
 bash scripts/analysis.sh reproduce A
 ```
 PowerShell:
 ```powershell
-git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git; cd wardwatch
-Invoke-WebRequest -Uri "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/wardwatch-v2-dataset.zip" -OutFile v2.zip; Expand-Archive v2.zip -DestinationPath . -Force
-docker build --pull --build-arg "GIT_COMMIT=$(git rev-parse HEAD)" -t wardwatch-analysis:0.2.0 services/analysis
+cd wardwatch-submission/code
+Get-FileHash ../release/<DATASET_ZIP> -Algorithm SHA256; Expand-Archive ../release/<DATASET_ZIP> -DestinationPath . -Force
+docker build --pull -t wardwatch-analysis:0.2.0 services/analysis
 docker run --rm --network none -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 sh -c "python -m unittest discover -s tests/pipeline -p 'test_*.py'; python -m unittest discover -s tests/realtime -t . -p 'test_*.py'; python -m unittest discover -s tests/triage -t . -p 'test_*.py'; PYTHONPATH=services/shared:services/devices:services/attacker:scripts python -m unittest discover -s tests/generation -p 'test_*.py'"
 docker run --rm --network none --cpus 5 -e ANALYSIS_CPUS=5 -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 python -m src.reproduce A
 ```
-**Expected.** With only the code and the v2 dataset, `bash scripts/analysis.sh test` ends with this summary (the dashboard folder needs the dashboard image from Level 1; the
+(The dataset zip extracts `data/processed/v2/...` and `data/raw/sessions/split_v2.json` into the `code` folder. The package has no `.git` folder, so the image's commit label stays `unknown`; that does not affect anything.)
+
+**Expected.** With the code and the v2 dataset only, `bash scripts/analysis.sh test` ends with this summary (the dashboard folder needs the dashboard image from Level 1; the
 skips are tests that need data that is not published, each skip message says which; section 6):
 
 ```
@@ -77,9 +89,25 @@ made on (SHA-256 in `expected.json`) and stops with `FAIL: wrong dataset` otherw
 `RESULT A: PASS (30 comparisons, ...)` (about 3 minutes on 5 CPUs). `reproduce B` ends `RESULT B: PASS (36 comparisons, ...)` (about 1 minute).
 The results zip is **not** needed for Level 2.
 
-If `git clone` fails with `Repository not found` or asks for a username and password, the repository is private. Ask the team for access and sign in (`gh auth login`, or use a
-GitHub personal access token as the password), or ask for the code as a zip. (Whether and when the repository becomes public is decided by the team; this line is
-updated then.)
+<details>
+<summary>If you have access to the private repository (git clone and release download commands)</summary>
+
+bash:
+```bash
+git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git && cd wardwatch
+curl -L -o results.zip "https://github.com/TheGuest55/wardwatch/releases/download/results-v1/<RESULTS_ZIP>"
+curl -L -o v2.zip "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/<DATASET_ZIP>"
+```
+PowerShell:
+```powershell
+git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git; cd wardwatch
+Invoke-WebRequest -Uri "https://github.com/TheGuest55/wardwatch/releases/download/results-v1/<RESULTS_ZIP>" -OutFile results.zip
+Invoke-WebRequest -Uri "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/<DATASET_ZIP>" -OutFile v2.zip
+```
+Then follow the Level 1 and Level 2 blocks above with `results.zip` / `v2.zip` in place of `../release/<...>` (check the same hashes). Release pages:
+<https://github.com/TheGuest55/wardwatch/releases/tag/results-v1> and <https://github.com/TheGuest55/wardwatch/releases/tag/v2-dataset>. Without access they return "404 Not Found": that is
+normal for a private repository; use the submission package.
+</details>
 
 ---
 
@@ -88,19 +116,20 @@ updated then.)
 - **Docker** (Docker Desktop on Windows or macOS, Docker Engine on Linux) with at least **8 GB of memory** for Docker (**10 GB** for Experiment D).
   In Docker Desktop: Settings, Resources. Disk: about 4 GB for the analysis image, 1 GB for the dashboard image, about 1 GB for the v2 dataset, up to
   10 GB with CIC data. Confirm with `docker --version` and `docker info`.
-- **git**, with line endings kept as LF: clone with `-c core.autocrlf=input` as above (or run `git config --global core.autocrlf input` before cloning). Windows
-  checkouts with CRLF break the shell scripts (`bash\r: command not found`; see Troubleshooting).
+- **git** is needed only for the private-repository route (it is not needed for the submission package). Keep line endings LF: clone with `-c core.autocrlf=input` (or run
+  `git config --global core.autocrlf input` before cloning). Windows checkouts with CRLF break the shell scripts (`bash\r: command not found`; see Troubleshooting). When you unzip the
+  submission package on Windows, use a tool that keeps the files as they are (Expand-Archive does).
 - **bash** is only needed for `scripts/analysis.sh` and `make` shortcuts; PowerShell users can use the `docker run` forms given below.
 - No Python is needed on the host: everything runs in the images.
 
 ## 2. Level 1: view the results
 
-**Downloads.** The results zip is for **viewing only** (Level 1); Level 2 does not use it. Go to <https://github.com/TheGuest55/wardwatch/releases/tag/results-v1> and download the asset `<RESULTS_ASSET>.zip`
-(about 316 MB). Check it is the published file:
+**Downloads.** The results zip is for **viewing only** (Level 1); Level 2 does not use it. It is `release/<RESULTS_ZIP>` in the submission package (about 316 MB); with access to the private repository it is the
+asset of the `results-v1` release. Check it is the published file:
 
 bash: `sha256sum results.zip`   PowerShell: `Get-FileHash results.zip -Algorithm SHA256`
 
-The expected SHA-256 is printed on the release page. (To be filled in once the release check is done: `<RESULTS_SHA256>`.)
+The expected SHA-256 of the results zip is `853db3c1818d43091ffef5ff77a4401a8315dc99bffe421027e16c23546e7e74` (built from commit 48e9ea5; the build date and commit are also in `BUNDLE.json` inside the zip).
 
 **Unzip, build, run.** The zip holds `runs/`, `live/incidents.jsonl`, `testbed_windows.parquet`, `MANIFEST.sha256` and `BUNDLE.json`; unzip it into a folder called
 `results`. Verify the files against the manifest (bash): `( cd results && sha256sum -c MANIFEST.sha256 )`. Build the dashboard image once
@@ -127,8 +156,8 @@ are never published; the page shows the recorded hash and this message instead. 
 
 ## 3. Level 2: reproduce the results from the v2 dataset
 
-**Downloads.** From <https://github.com/TheGuest55/wardwatch/releases/tag/v2-dataset> download `<DATASET_ASSET>.zip` (the Quick start uses the asset name
-`wardwatch-v2-dataset.zip`) and extract it **at the repository root**: it carries the `data/...` paths. Afterwards these must exist:
+**Downloads.** The dataset zip is `release/<DATASET_ZIP>` in the submission package (with access to the private repository: the asset of the `v2-dataset` release). Extract it **at the root of the
+`code` folder**: it carries the `data/...` paths. Afterwards these must exist:
 
 ```
 data/processed/v2/testbed_windows.parquet
@@ -142,7 +171,7 @@ with is `reproduce/expected.json`, committed in the repository (see below).
 SHA-256 `58b3e6b6341521d9a4a58a393679766dfa05e2b92363125f6fb5b721d87e29a6`; `reproduce` checks this itself before training.)
 
 **Build the analysis image** (about 6 minutes, about 4 GB; the only step that needs the network):
-`docker build --pull --build-arg "GIT_COMMIT=$(git rev-parse HEAD)" -t wardwatch-analysis:0.2.0 services/analysis`
+`docker build --pull -t wardwatch-analysis:0.2.0 services/analysis` (from a git checkout you may add `--build-arg "GIT_COMMIT=$(git rev-parse HEAD)"` to label the image with the commit)
 
 **Tests.** `bash scripts/analysis.sh test` runs every test folder and prints a per-folder and TOTAL line. See "Tests per level" for the expected counts.
 

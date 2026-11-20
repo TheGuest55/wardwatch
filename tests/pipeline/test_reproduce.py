@@ -307,8 +307,10 @@ class TestManualReferences(unittest.TestCase):
         m = (ROOT / "USER_MANUAL.md").read_text()
         self.assertIn("## Quick start", m)
         head = m.split("## 1. Requirements")[0]
-        self.assertEqual(head.count("```bash"), 2)
-        self.assertEqual(head.count("```powershell"), 2)
+        self.assertGreaterEqual(head.count("```bash"), 2)
+        self.assertGreaterEqual(head.count("```powershell"), 2)
+        self.assertIn("submission package", head)                                      # the primary route: no GitHub access needed
+        self.assertIn("If you have access to the private repository", head)
 
 
 if __name__ == "__main__":
