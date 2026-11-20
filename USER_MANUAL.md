@@ -5,7 +5,7 @@ Three levels, from "just look at the results" to "regenerate the data":
 | Level | What you do | What you need | Time |
 |---|---|---|---|
 | **1. View** | open the dashboard on the published results | Docker, git, the results zip | about 10 min |
-| **2. Reproduce** | retrain models from the published v2 dataset and compare with the recorded results | Docker, git, the v2 dataset zip, the analysis image (about 4 GB) | about 30 min plus the image build |
+| **2. Reproduce** | retrain models from the published v2 dataset and compare with `reproduce/expected.json` (in the repository) | Docker, git, the v2 dataset zip, the analysis image (about 4 GB); **not** the results zip | about 30 min plus the image build |
 | **3. Regenerate** | record new lab sessions, extract features, rebuild the dataset | Docker, hours of lab time, the BIDMC vitals download | many hours (written, not tested end to end) |
 
 Every command is given for **bash** (Linux, macOS, Git Bash, WSL) and **PowerShell** (Windows). Commands inside a code block marked
@@ -70,9 +70,12 @@ dashboard    ran 88    skipped 4   OK (4 skipped: data absent, see USER_MANUAL)
 TOTAL        ran 483   skipped 24  OK
 ```
 The PowerShell form runs the four analysis-image folders only: each unittest run ends with `OK` (with `skipped=...` where data is absent; 283 + 18 + 44 + 50 tests).
-The reproduce command prints a table of recorded versus reproduced F1 and ends with `RESULT A: PASS (10 comparisons, ...)`. Reproduction compares against the recorded results in
-`data/processed/v2/runs/`, which the results zip (Level 1) provides: extract the whole results zip into `data/processed/v2/` before the reproduce command (exact commands in
-Level 2, section 3). Without it the reproduce command reports FAIL ("no recorded run").
+
+`reproduce A` retrains five models and compares **30 numbers** (test F1, PR-AUC and FPR at 90% recall, for all rows and with the attacker host excluded) with
+`reproduce/expected.json`, a file that ships with the repository. Before it trains anything it checks that your `testbed_windows.parquet` is the file the results were
+made on (SHA-256 in `expected.json`) and stops with `FAIL: wrong dataset` otherwise. Expected: a table in which every row ends `PASS` and the last line
+`RESULT A: PASS (30 comparisons, ...)` (about 3 minutes on 5 CPUs). `reproduce B` ends `RESULT B: PASS (36 comparisons, ...)` (about 1 minute).
+The results zip is **not** needed for Level 2.
 
 If `git clone` fails with `Repository not found` or asks for a username and password, the repository is private. Ask the team for access and sign in (`gh auth login`, or use a
 GitHub personal access token as the password), or ask for the code as a zip. (Whether and when the repository becomes public is decided by the team; this line is
@@ -92,7 +95,7 @@ updated then.)
 
 ## 2. Level 1: view the results
 
-**Downloads.** Go to <https://github.com/TheGuest55/wardwatch/releases/tag/results-v1> and download the asset `<RESULTS_ASSET>.zip`
+**Downloads.** The results zip is for **viewing only** (Level 1); Level 2 does not use it. Go to <https://github.com/TheGuest55/wardwatch/releases/tag/results-v1> and download the asset `<RESULTS_ASSET>.zip`
 (about 316 MB). Check it is the published file:
 
 bash: `sha256sum results.zip`   PowerShell: `Get-FileHash results.zip -Algorithm SHA256`
@@ -133,27 +136,29 @@ data/processed/v2/feature_list.json
 data/processed/v2/sessions/*.parquet
 data/raw/sessions/split_v2.json
 ```
-The dataset contains no run records and no raw PCAPs. The recorded results to compare with come from the results zip (Level 1). Extract the **whole zip into `data/processed/v2/`**, so that the recorded run
-records sit at `data/processed/v2/runs/` (the reproduce commands read `data/processed/v2/runs/expA/<model>_s0.json`, `expB/...` and `lstm/A_k12_h32_s0.json`):
-
-bash: `unzip -o results.zip -d data/processed/v2`   PowerShell: `Expand-Archive results.zip -DestinationPath data/processed/v2 -Force`
-
-(The zip also holds `testbed_windows.parquet`, `live/incidents.jsonl`, `MANIFEST.sha256` and `BUNDLE.json`; the parquet is the same file as in the dataset zip.)
-(Release hashes to check: `<DATASET_SHA256>` for the zip; to be filled in once the release check is done.)
+The dataset contains no run records and no raw PCAPs. **Level 2 needs nothing else**: not the results zip and not the run records. What your run is compared
+with is `reproduce/expected.json`, committed in the repository (see below).
+(Release hashes to check: `<DATASET_SHA256>` for the zip; to be filled in once the release check is done. The file inside it that matters, `testbed_windows.parquet`, must have the
+SHA-256 `58b3e6b6341521d9a4a58a393679766dfa05e2b92363125f6fb5b721d87e29a6`; `reproduce` checks this itself before training.)
 
 **Build the analysis image** (about 6 minutes, about 4 GB; the only step that needs the network):
 `docker build --pull --build-arg "GIT_COMMIT=$(git rev-parse HEAD)" -t wardwatch-analysis:0.2.0 services/analysis`
 
 **Tests.** `bash scripts/analysis.sh test` runs every test folder and prints a per-folder and TOTAL line. See "Tests per level" for the expected counts.
 
-**Reproduce.** Each command retrains with the existing training code, writes **only** to `data/processed/v2/repro/` (never to `runs/`), compares test F1 (all rows and
-attacker host excluded) with the recorded run, prints PASS or FAIL with the tolerance, and exits non-zero on FAIL.
+**Reproduce.** Each command retrains with the existing training code, writes **only** to `data/processed/v2/repro/` (never to `runs/`), compares test F1, PR-AUC and
+FPR at 90% recall (all rows and attacker host excluded: 6 numbers per run) with `reproduce/expected.json`, prints PASS or FAIL with the tolerance, and exits non-zero on FAIL.
+
+**Where the expected numbers come from.** `reproduce/expected.json` is generated by the authors with `python -m src.reproduce --write-expected` on the full data and committed. It holds the
+SHA-256 of the dataset and of the split the results were made on, and one entry per compared run: the run record's path, commit and SHA-256 (the records carry no MLflow run id, so the file hash
+identifies the record exactly), the tolerance, and the headline metrics, which are exactly the numbers of the dashboard's headline columns. Before training, `reproduce` stops with `FAIL: wrong dataset`
+if your `testbed_windows.parquet` has a different SHA-256. It never reads `runs/`.
 
 | Command (bash) | PowerShell | What it retrains | Time |
 |---|---|---|---|
-| `bash scripts/analysis.sh reproduce A` (or `make reproduce-A`) | the PowerShell form below, with `A` | Experiment A, seed 0: XGBoost, Random Forest, Isolation Forest, autoencoder, rule baseline | about 2 min |
-| `bash scripts/analysis.sh reproduce B` (or `make reproduce-B`) | `... python -m src.reproduce B` | Experiment B, seed 0, two held-out classes (recon_scan = easy, spoof_vitals = hard): XGBoost, Isolation Forest, rule baseline | about 1 min |
-| `bash scripts/analysis.sh reproduce lstm` (or `make reproduce-lstm`) | `... python -m src.reproduce lstm` | the LSTM, seed 0, the selected configuration (k=12, hidden 32) | about 2 min |
+| `bash scripts/analysis.sh reproduce A` (or `make reproduce-A`) | the PowerShell form below, with `A` | Experiment A, seed 0: XGBoost, Random Forest, Isolation Forest, autoencoder, rule baseline | about 3 min (30 comparisons) |
+| `bash scripts/analysis.sh reproduce B` (or `make reproduce-B`) | `... python -m src.reproduce B` | Experiment B, seed 0, two held-out classes (recon_scan = easy, spoof_vitals = hard): XGBoost, Isolation Forest, rule baseline | about 1 min (36 comparisons) |
+| `bash scripts/analysis.sh reproduce lstm` (or `make reproduce-lstm`) | `... python -m src.reproduce lstm` | the LSTM, seed 0, the configuration in expected.json (k=12, hidden 32). **Needs the raw session ground truth (`data/raw/sessions/<S>/ground_truth.jsonl`), which is not in the dataset release** (it names lab accounts): without it the command stops at once and says so; it runs on the authors' full-data checkout (Level 3 material) | about 2 min |
 
 PowerShell form of any of them (replace `A` by `B` or `lstm`):
 ```powershell
@@ -208,7 +213,7 @@ Measured (19 Nov, `bash scripts/analysis.sh test`, wardwatch-analysis:0.2.0 and 
 |---|---|---|---|---|---|---|---|
 | fresh clone, no data | 283 run, 12 skipped | 18 run, 2 skipped | 44 run, 8 skipped | 50 run, 0 | 88 run, 4 skipped | 483 | 26 |
 | plus the v2 dataset (Level 2) | 283 run, 11 skipped | 18 run, 1 skipped | 44 run, 8 skipped | 50 run, 0 | 88 run, 4 skipped | 483 | 24 |
-| plus the results zip (Level 1 and 2) | 283 run, 11 skipped | 18 run, 1 skipped | 44 run, 8 skipped | 50 run, 0 | 88 run, 4 skipped | 483 | 24 |
+| plus the results zip (Level 1; adds no tests) | 283 run, 11 skipped | 18 run, 1 skipped | 44 run, 8 skipped | 50 run, 0 | 88 run, 4 skipped | 483 | 24 |
 | full data (the authors' checkout: raw PCAPs, models, credentials file) | 283 run, 0 skipped | 18 run, 0 skipped | 44 run, 0 skipped | 50 run, 0 | 88 run, 0 skipped | 483 | 0 |
 
 The results zip adds no running tests: the tests that read recorded runs also need the trained models or the raw PCAPs (Level 3 material, not published). The 24
@@ -223,7 +228,9 @@ bundle build tests) or CICIoMT2024's feature CSVs (section 5). Run `python -m un
 | a training run ends with `Killed` or exit code 137 | Docker ran out of memory. Raise Docker's memory (Settings, Resources) to 8 GB, or 10 GB for Experiment D. |
 | `port is already allocated` or the page does not open | another process uses 8501: use `-p 8502:8501`. Inside an `sbx` sandbox, publish the port from the host (`sbx ports <name> --publish 8501:8501`). |
 | `docker build` takes a long time or fills the disk | the analysis image is about 4 GB and takes about 6 minutes; free space with `docker builder prune`. |
-| the tests report data files not found | the v2 dataset or the results `runs/` folder is not at the path in Level 2; the layout must match exactly. |
+| the tests report data files not found | the v2 dataset is not at the path in Level 2; the layout must match exactly. |
+| `reproduce` prints `FAIL: wrong dataset` | your `testbed_windows.parquet` is not the file the expected numbers were made on: download the v2 dataset release again and extract it at the repository root. |
+| `reproduce lstm` stops with `cannot run the LSTM target` | the LSTM needs the raw session ground truth, which the dataset release does not contain; use `reproduce A` and `reproduce B` (section 3). |
 | the tests print `skipped` | normal without the full data: each skip names what is missing and the level that provides it (section 6). |
 | `scripts/analysis.sh` says `no such image` | the script builds `wardwatch-analysis:0.2.0` itself the first time it is missing; or build it as in Level 2. |
 | a worktree or clone shows no `data/` | `data/` is not in git. Download the releases as above. |

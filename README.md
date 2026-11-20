@@ -6,6 +6,12 @@ An isolated Docker lab with a simulated hospital ward (MQTT broker, devices, nur
 capture and an attacker container. Most people only need the **model-work quickstart** below — the
 lab itself is **not needed** for working with the shared dataset (it is documented further down).
 
+## User manual
+
+[`USER_MANUAL.md`](USER_MANUAL.md) has three levels, each with a copy-paste Quick start for bash and PowerShell: **1. view** the published results in the
+dashboard (needs the results zip, for viewing only), **2. reproduce** results from the v2 dataset (needs only the code and the dataset zip: `make reproduce-A`
+and `make reproduce-B` retrain and compare with the committed `reproduce/expected.json`) and **3. regenerate** the data (lab, sessions, extraction).
+
 ## What's inside
 
 A Docker Compose lab on one internal (no internet route) network, `ward_net`: a Mosquitto **broker**

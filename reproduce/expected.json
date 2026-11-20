@@ -1,0 +1,211 @@
+{
+  "generated_utc": "2026-11-20T03:30:09Z",
+  "generator": "python -m src.reproduce --write-expected",
+  "notes": "run_id is the SHA-256 of the run record file: the records carry no MLflow run id, so the file hash identifies the record exactly. metrics are the dashboard's headline columns (test F1, PR-AUC, FPR at 90% recall) for all rows (test_all_*) and attacker host excluded (test_noatk_*). Regenerate with: python -m src.reproduce --write-expected (authors only, on full data).",
+  "dataset_sha256": "58b3e6b6341521d9a4a58a393679766dfa05e2b92363125f6fb5b721d87e29a6",
+  "split_sha256": "4dd707c841de00dedfae1156325610f374a93bd6c35a7422939fbd8939cd53e6",
+  "runs": {
+    "A/xgboost": {
+      "experiment": "A",
+      "model": "xgboost",
+      "record_path": "data/processed/v2/runs/expA/xgboost_s0.json",
+      "run_id": "77cfc0b78fb970c1fbd98969f0d0eeed7f56b5c070e8dfe435a95ceacbf1d5b9",
+      "git_commit": "c2f35bd79ae08480652dc008236b69cf746229e4",
+      "tolerance": 0.005,
+      "metrics": {
+        "test_all_f1": 0.896361631753032,
+        "test_all_pr_auc": 0.9340289102564753,
+        "test_all_fpr_at_recall_90": 0.018941457486485354,
+        "test_noatk_f1": 0.9463986599664992,
+        "test_noatk_pr_auc": 0.9647107738002089,
+        "test_noatk_fpr_at_recall_90": 4.191641866118959e-05
+      }
+    },
+    "A/random_forest": {
+      "experiment": "A",
+      "model": "random_forest",
+      "record_path": "data/processed/v2/runs/expA/random_forest_s0.json",
+      "run_id": "18e7148b2dac357b89380c078d0dc740152a88cddd2e03a687a1dd06d28e4119",
+      "git_commit": "c2f35bd79ae08480652dc008236b69cf746229e4",
+      "tolerance": 0.005,
+      "metrics": {
+        "test_all_f1": 0.9176728869374314,
+        "test_all_pr_auc": 0.9339155120056493,
+        "test_all_fpr_at_recall_90": 0.008674517034739974,
+        "test_noatk_f1": 0.9548936170212766,
+        "test_noatk_pr_auc": 0.9747528294420903,
+        "test_noatk_fpr_at_recall_90": 0.0
+      }
+    },
+    "A/isolation_forest": {
+      "experiment": "A",
+      "model": "isolation_forest",
+      "record_path": "data/processed/v2/runs/expA/isolation_forest_s0.json",
+      "run_id": "756b9218fddce4d433c5ae43a84aec5638d762ccfe277d6c5e50ad1a92b2c36a",
+      "git_commit": "c454bf244965bf80ba375b8508ebf154f9c161e6",
+      "tolerance": 0.005,
+      "metrics": {
+        "test_all_f1": 0.7289940828402367,
+        "test_all_pr_auc": 0.7705639687392118,
+        "test_all_fpr_at_recall_90": 0.13183589657628966,
+        "test_noatk_f1": 0.7628318584070797,
+        "test_noatk_pr_auc": 0.8382832790529763,
+        "test_noatk_fpr_at_recall_90": 0.020706710818627655
+      }
+    },
+    "A/autoencoder": {
+      "experiment": "A",
+      "model": "autoencoder",
+      "record_path": "data/processed/v2/runs/expA/autoencoder_s0.json",
+      "run_id": "b5958c3a49dad883c27d157ccff5786e452dfc00d5550fc04d7e6820bc644c56",
+      "git_commit": "c454bf244965bf80ba375b8508ebf154f9c161e6",
+      "tolerance": 0.005,
+      "metrics": {
+        "test_all_f1": 0.7966976264189887,
+        "test_all_pr_auc": 0.8407527436286322,
+        "test_all_fpr_at_recall_90": 0.09453966391484725,
+        "test_noatk_f1": 0.8123123123123123,
+        "test_noatk_pr_auc": 0.9009056024034982,
+        "test_noatk_fpr_at_recall_90": 0.008257534476254349
+      }
+    },
+    "A/rule_baseline": {
+      "experiment": "A",
+      "model": "rule_baseline",
+      "record_path": "data/processed/v2/runs/expA/rule_baseline_s0.json",
+      "run_id": "c0b07f091fb336300f4fb1708a94ea79c44625212758e431f1ea40d7a2dbac11",
+      "git_commit": "671868f5b5d2d0a0e8420550a4ba62399b83c0a9",
+      "tolerance": 0.005,
+      "metrics": {
+        "test_all_f1": 0.786096256684492,
+        "test_all_pr_auc": 0.7090304726062071,
+        "test_all_fpr_at_recall_90": 0.13485311989272095,
+        "test_noatk_f1": 0.8456883509833586,
+        "test_noatk_pr_auc": 0.7567959400150497,
+        "test_noatk_fpr_at_recall_90": 0.0066227941484679545
+      }
+    },
+    "B/xgboost/recon_scan": {
+      "experiment": "B",
+      "model": "xgboost",
+      "record_path": "data/processed/v2/runs/expB/xgboost_recon_scan_s0.json",
+      "run_id": "963294265825f8ff7f9bea978a0203933c7d80e1b1badfd6a0ba7c404d12f2a0",
+      "git_commit": "c2f35bd79ae08480652dc008236b69cf746229e4",
+      "tolerance": 0.005,
+      "metrics": {
+        "test_all_f1": 0.9458128078817734,
+        "test_all_pr_auc": 1.0,
+        "test_all_fpr_at_recall_90": 0.0,
+        "test_noatk_f1": 0.9424083769633508,
+        "test_noatk_pr_auc": 0.9999999999999999,
+        "test_noatk_fpr_at_recall_90": 0.0
+      },
+      "class": "recon_scan"
+    },
+    "B/xgboost/spoof_vitals": {
+      "experiment": "B",
+      "model": "xgboost",
+      "record_path": "data/processed/v2/runs/expB/xgboost_spoof_vitals_s0.json",
+      "run_id": "63648d2d49599f43e4978a2a32dbcabf4f92e1882cc9ad1692d53a9a8051ee1b",
+      "git_commit": "c2f35bd79ae08480652dc008236b69cf746229e4",
+      "tolerance": 0.005,
+      "metrics": {
+        "test_all_f1": 0.3177570093457944,
+        "test_all_pr_auc": 0.2552491868109641,
+        "test_all_fpr_at_recall_90": 0.7401835477517495,
+        "test_noatk_f1": 0.4857142857142857,
+        "test_noatk_pr_auc": 0.4778703420774074,
+        "test_noatk_fpr_at_recall_90": 0.11619231252881754
+      },
+      "class": "spoof_vitals"
+    },
+    "B/isolation_forest/recon_scan": {
+      "experiment": "B",
+      "model": "isolation_forest",
+      "record_path": "data/processed/v2/runs/expB/isolation_forest_recon_scan_s0.json",
+      "run_id": "223d4bcb095ef27d0a7b42edcdaba4c61695ba6a7f4742f04186a6c005d5aa4e",
+      "git_commit": "c454bf244965bf80ba375b8508ebf154f9c161e6",
+      "tolerance": 0.005,
+      "metrics": {
+        "test_all_f1": 0.7983367983367984,
+        "test_all_pr_auc": 0.9525001068899012,
+        "test_all_fpr_at_recall_90": 0.00020952939697439551,
+        "test_noatk_f1": 0.7929515418502202,
+        "test_noatk_pr_auc": 0.9399933526502215,
+        "test_noatk_fpr_at_recall_90": 0.00020958209330594794
+      },
+      "class": "recon_scan"
+    },
+    "B/isolation_forest/spoof_vitals": {
+      "experiment": "B",
+      "model": "isolation_forest",
+      "record_path": "data/processed/v2/runs/expB/isolation_forest_spoof_vitals_s0.json",
+      "run_id": "08baf7de627c37be6d3691d95a72f9ce1cdc04c407a6357c07768c6ef019938e",
+      "git_commit": "c454bf244965bf80ba375b8508ebf154f9c161e6",
+      "tolerance": 0.005,
+      "metrics": {
+        "test_all_f1": 0.33170731707317075,
+        "test_all_pr_auc": 0.3692241991438041,
+        "test_all_fpr_at_recall_90": 0.04303733813854084,
+        "test_noatk_f1": 0.24161073825503357,
+        "test_noatk_pr_auc": 0.3637971408680042,
+        "test_noatk_fpr_at_recall_90": 0.09091671207612022
+      },
+      "class": "spoof_vitals"
+    },
+    "B/rule_baseline/recon_scan": {
+      "experiment": "B",
+      "model": "rule_baseline",
+      "record_path": "data/processed/v2/runs/expB/rule_baseline_recon_scan_s0.json",
+      "run_id": "80694072231d8b69d343bf4cf2921683e7d4583a374c5f608e7a4ebbb186873d",
+      "git_commit": "671868f5b5d2d0a0e8420550a4ba62399b83c0a9",
+      "tolerance": 0.005,
+      "metrics": {
+        "test_all_f1": 0.05555555555555555,
+        "test_all_pr_auc": 0.043016023452404406,
+        "test_all_fpr_at_recall_90": 0.7647403930771487,
+        "test_noatk_f1": 0.029154518950437316,
+        "test_noatk_pr_auc": 0.014025722066088663,
+        "test_noatk_fpr_at_recall_90": 0.7648069748920652
+      },
+      "class": "recon_scan"
+    },
+    "B/rule_baseline/spoof_vitals": {
+      "experiment": "B",
+      "model": "rule_baseline",
+      "record_path": "data/processed/v2/runs/expB/rule_baseline_spoof_vitals_s0.json",
+      "run_id": "e0d061a8f4cb2f85eeff2dfc6a70c62b01eff20e361cc9f9734157c411815215",
+      "git_commit": "671868f5b5d2d0a0e8420550a4ba62399b83c0a9",
+      "tolerance": 0.005,
+      "metrics": {
+        "test_all_f1": 0.009389671361502348,
+        "test_all_pr_auc": 0.03111876268986237,
+        "test_all_fpr_at_recall_90": 0.7416083476511754,
+        "test_noatk_f1": 0.011363636363636364,
+        "test_noatk_pr_auc": 0.057239151550920755,
+        "test_noatk_fpr_at_recall_90": 0.06715010269522571
+      },
+      "class": "spoof_vitals"
+    },
+    "LSTM/A_k12_h32_s0": {
+      "experiment": "LSTM",
+      "model": "lstm",
+      "record_path": "data/processed/v2/runs/lstm/A_k12_h32_s0.json",
+      "run_id": "fdbf0182dc822244f745ecdec7a142325f554815b9aa1f06b7c9cd6d905f1ac7",
+      "git_commit": "023f01a06dcbea11bbfbc386f923ce7458829015",
+      "tolerance": 0.02,
+      "metrics": {
+        "test_all_f1": 0.9498680738786279,
+        "test_all_pr_auc": 0.9873736187935971,
+        "test_all_fpr_at_recall_90": 0.00020952939697439551,
+        "test_noatk_f1": 0.949238578680203,
+        "test_noatk_pr_auc": 0.9806230635142613,
+        "test_noatk_fpr_at_recall_90": 8.383283732237918e-05
+      },
+      "k": 12,
+      "hidden": 32,
+      "run_name": "A_k12_h32_s0",
+      "threads": 5
+    }
+  }
+}
