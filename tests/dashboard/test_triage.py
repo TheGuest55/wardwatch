@@ -339,3 +339,33 @@ class TestExperimentD:
 def _df_without_d(root):
     d = _df(root)
     return d[~d["experiment"].astype(str).str.startswith("D")]
+
+
+class TestRandomSplitReference:
+    """The random-split reference (experiment "random-split-reference", runs/random_split/) is a reference, never a model comparison:
+    it stays out of every headline table and the selection."""
+
+    def _ref(self, model, f1):
+        r = record(model, "random-split-reference", 0, f1, {"seeds": [0, 1, 2, 3, 4]}, {"note": "reference only; never used for model selection"})
+        r["role"] = "classifier"
+        return r
+
+    def test_excluded_with_the_not_a_model_experiment_reason(self, root):
+        write(root, "random_split/xgboost.json", self._ref("xgboost", 0.99))
+        write(root, "random_split/random_forest.json", self._ref("random_forest", 0.99))
+        by = _reasons(_df(root))
+        for rel in ("random_split/xgboost.json", "random_split/random_forest.json"):
+            assert by[rel] == loaders.R_NOT_MODEL, rel
+
+    def test_headline_and_selection_do_not_change_when_the_reference_records_are_added(self, root):
+        before = mv.headline(_df(root), "all", root)
+        sel = mv.selection(before)
+        write(root, "random_split/xgboost.json", self._ref("xgboost", 0.99))
+        write(root, "random_split/random_forest.json", self._ref("random_forest", 0.99))
+        df = _df(root)
+        for view in ("all", "noatk"):
+            pd.testing.assert_frame_equal(mv.headline(_df(root), view, root),
+                                          mv.headline(df[~df["experiment"].eq("random-split-reference")], view, root))
+        pd.testing.assert_frame_equal(before, mv.headline(df, "all", root))
+        assert mv.selection(mv.headline(df, "all", root)) == sel
+        assert mv.a_by_config(df, "all")["model"].isin(["xgboost", "random_forest"]).sum() == 0
