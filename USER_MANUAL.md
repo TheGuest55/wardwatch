@@ -15,39 +15,41 @@ Every command is given for **bash** (Linux, macOS, Git Bash, WSL) and **PowerShe
 
 ## Quick start
 
-**Your starting point is the submission package** (no GitHub account or access is needed): a folder that holds the code and a `release/` folder with the two zip files.
+**Your starting point is the submission package** (no GitHub account or access is needed): a folder that holds the code and a `release/` folder with the v2 dataset zip.
+The results zip is larger and is **not** in the package: download it from the shared-drive link `<RESULTS_LINK>` (Level 1 only) and save it in the `wardwatch-submission` folder.
 
 ```
 wardwatch-submission/
   code/       the repository (this manual is code/USER_MANUAL.md)
-  release/    <RESULTS_ZIP> (the results, Level 1)  and  <DATASET_ZIP> (the v2 dataset, Level 2)
+  release/    <DATASET_ZIP> (the v2 dataset, Level 2)
+  <RESULTS_ZIP>   the results zip, downloaded from <RESULTS_LINK> (Level 1)
 ```
-(`<RESULTS_ZIP>` and `<DATASET_ZIP>` stand for the two file names in `release/`; use the names you find there. The repository is private, so `git clone` and the GitHub release
-download links only work for people who have access: those commands are in the box "If you have access to the private repository" at the end of this section.)
+(`<RESULTS_ZIP>` and `<DATASET_ZIP>` stand for the file names you have. The repository is private, so `git clone` and the GitHub release download links only work for people who
+have access: those commands are in the box "If you have access to the private repository" at the end of this section.)
 
-Run every command from the folder named in the first line of the block. **Check each zip against the hash in this manual before you use it**:
-the results zip `<RESULTS_ZIP>` must have SHA-256 `853db3c1818d43091ffef5ff77a4401a8315dc99bffe421027e16c23546e7e74` and the dataset zip `<DATASET_ZIP>` must have `<DATASET_SHA256>`
-(to be filled in; see "Downloads" under Level 1 and Level 2). bash: `sha256sum <file>`. PowerShell: `Get-FileHash <file> -Algorithm SHA256`.
+Run every command from the folder named in the first line of the block. **Check each zip against its hash before you use it**:
+the results zip must have SHA-256 `<RESULTS_ZIP_SHA256>` and the dataset zip `<DATASET_SHA256>` (both are filled in when the files are published; see "Downloads" under Level 1 and
+Level 2). bash: `sha256sum <file>`. PowerShell: `Get-FileHash <file> -Algorithm SHA256`.
 
 ### Level 1 in 5 commands (view the results)
 
 bash:
 ```bash
 cd wardwatch-submission/code
-sha256sum ../release/<RESULTS_ZIP>
-unzip ../release/<RESULTS_ZIP> -d results
+sha256sum ../<RESULTS_ZIP>
+unzip ../<RESULTS_ZIP> -d results
 docker build -t wardwatch-dashboard:0.1.0 docker/dashboard
 docker run --rm --name wardwatch-dashboard -p 8501:8501 --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges -v "$PWD:/work:ro" -v "$PWD/results:/data:ro" -e WARDWATCH_DATA_ROOT=/data wardwatch-dashboard:0.1.0
 ```
 PowerShell:
 ```powershell
 cd wardwatch-submission/code
-Get-FileHash ../release/<RESULTS_ZIP> -Algorithm SHA256
-Expand-Archive ../release/<RESULTS_ZIP> -DestinationPath results
+Get-FileHash ../<RESULTS_ZIP> -Algorithm SHA256
+Expand-Archive ../<RESULTS_ZIP> -DestinationPath results
 docker build -t wardwatch-dashboard:0.1.0 docker/dashboard
 docker run --rm --name wardwatch-dashboard -p 8501:8501 --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges -v "${PWD}:/work:ro" -v "${PWD}/results:/data:ro" -e WARDWATCH_DATA_ROOT=/data wardwatch-dashboard:0.1.0
 ```
-**Expected:** the first command prints the results hash above (compare it). The last prints `You can now view your Streamlit app in your browser.` Open <http://localhost:8501>: the Overview page shows
+**Expected:** the first command prints the results hash `<RESULTS_ZIP_SHA256>` (compare it). The last prints `You can now view your Streamlit app in your browser.` Open <http://localhost:8501>: the Overview page shows
 a headline table with six models (XGBoost, Random Forest, autoencoder, Isolation Forest, LSTM, rule baseline). Stop with Ctrl+C.
 
 ### Level 2 in 5 commands (reproduce)
@@ -95,17 +97,15 @@ The results zip is **not** needed for Level 2.
 bash:
 ```bash
 git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git && cd wardwatch
-curl -L -o results.zip "https://github.com/TheGuest55/wardwatch/releases/download/results-v1/<RESULTS_ZIP>"
 curl -L -o v2.zip "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/<DATASET_ZIP>"
 ```
 PowerShell:
 ```powershell
 git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git; cd wardwatch
-Invoke-WebRequest -Uri "https://github.com/TheGuest55/wardwatch/releases/download/results-v1/<RESULTS_ZIP>" -OutFile results.zip
 Invoke-WebRequest -Uri "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/<DATASET_ZIP>" -OutFile v2.zip
 ```
-Then follow the Level 1 and Level 2 blocks above with `results.zip` / `v2.zip` in place of `../release/<...>` (check the same hashes). Release pages:
-<https://github.com/TheGuest55/wardwatch/releases/tag/results-v1> and <https://github.com/TheGuest55/wardwatch/releases/tag/v2-dataset>. Without access they return "404 Not Found": that is
+Then follow the Level 2 block above with `v2.zip` in place of `../release/<DATASET_ZIP>` (check the same hash); the results zip for Level 1 always comes from `<RESULTS_LINK>`. Release page of the dataset:
+<https://github.com/TheGuest55/wardwatch/releases/tag/v2-dataset>. Without access they return "404 Not Found": that is
 normal for a private repository; use the submission package.
 </details>
 
@@ -124,12 +124,12 @@ normal for a private repository; use the submission package.
 
 ## 2. Level 1: view the results
 
-**Downloads.** The results zip is for **viewing only** (Level 1); Level 2 does not use it. It is `release/<RESULTS_ZIP>` in the submission package (about 316 MB); with access to the private repository it is the
-asset of the `results-v1` release. Check it is the published file:
+**Downloads.** The results zip is for **viewing only** (Level 1); Level 2 does not use it. It is about 316 MB and is **not** in the submission package: download it from the shared-drive link
+`<RESULTS_LINK>` in your browser and save it in the `wardwatch-submission` folder (next to `code/`). Check it is the published file:
 
-bash: `sha256sum results.zip`   PowerShell: `Get-FileHash results.zip -Algorithm SHA256`
+bash: `sha256sum <RESULTS_ZIP>`   PowerShell: `Get-FileHash <RESULTS_ZIP> -Algorithm SHA256`
 
-The expected SHA-256 of the results zip is `853db3c1818d43091ffef5ff77a4401a8315dc99bffe421027e16c23546e7e74` (built from commit 48e9ea5; the build date and commit are also in `BUNDLE.json` inside the zip).
+The expected SHA-256 is `<RESULTS_ZIP_SHA256>` (to be filled in when the zip is published; `BUNDLE.json` inside the zip records the commit and build date it was made from).
 
 **Unzip, build, run.** The zip holds `runs/`, `live/incidents.jsonl`, `testbed_windows.parquet`, `MANIFEST.sha256` and `BUNDLE.json`; unzip it into a folder called
 `results`. Verify the files against the manifest (bash): `( cd results && sha256sum -c MANIFEST.sha256 )`. Build the dashboard image once
