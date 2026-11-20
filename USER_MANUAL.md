@@ -21,14 +21,14 @@ The results zip is larger and is **not** in the package: download it from the sh
 ```
 wardwatch-submission/
   code/       the repository (this manual is code/USER_MANUAL.md)
-  release/    <DATASET_ZIP> (the v2 dataset, Level 2)
+  release/    wardwatch-v2-dataset.zip (the v2 dataset, Level 2)
   <RESULTS_ZIP>   the results zip, downloaded from <RESULTS_LINK> (Level 1)
 ```
-(`<RESULTS_ZIP>` and `<DATASET_ZIP>` stand for the file names you have. The repository is private, so `git clone` and the GitHub release download links only work for people who
+(`<RESULTS_ZIP>` stands for the name of the results zip you downloaded; the dataset zip is `wardwatch-v2-dataset.zip`. The repository is private, so `git clone` and the GitHub release download links only work for people who
 have access: those commands are in the box "If you have access to the private repository" at the end of this section.)
 
 Run every command from the folder named in the first line of the block. **Check each zip against its hash before you use it**:
-the results zip must have SHA-256 `<RESULTS_ZIP_SHA256>` and the dataset zip `<DATASET_SHA256>` (both are filled in when the files are published; see "Downloads" under Level 1 and
+the results zip must have SHA-256 `<RESULTS_ZIP_SHA256>` and the dataset zip `b455fd8468f9d04c8550eb0b8138ece971f54d9eb1f4ac95ff7ef6f9a01d1387` (the results hash is filled in when that zip is published; see "Downloads" under Level 1 and
 Level 2). bash: `sha256sum <file>`. PowerShell: `Get-FileHash <file> -Algorithm SHA256`.
 
 ### Level 1 in 5 commands (view the results)
@@ -57,7 +57,7 @@ a headline table with six models (XGBoost, Random Forest, autoencoder, Isolation
 bash:
 ```bash
 cd wardwatch-submission/code
-sha256sum ../release/<DATASET_ZIP> && unzip -o ../release/<DATASET_ZIP>
+sha256sum ../release/wardwatch-v2-dataset.zip && unzip -o ../release/wardwatch-v2-dataset.zip
 docker build --pull -t wardwatch-analysis:0.2.0 services/analysis
 bash scripts/analysis.sh test
 bash scripts/analysis.sh reproduce A
@@ -65,7 +65,7 @@ bash scripts/analysis.sh reproduce A
 PowerShell:
 ```powershell
 cd wardwatch-submission/code
-Get-FileHash ../release/<DATASET_ZIP> -Algorithm SHA256; Expand-Archive ../release/<DATASET_ZIP> -DestinationPath . -Force
+Get-FileHash ../release/wardwatch-v2-dataset.zip -Algorithm SHA256; Expand-Archive ../release/wardwatch-v2-dataset.zip -DestinationPath . -Force
 docker build --pull -t wardwatch-analysis:0.2.0 services/analysis
 docker run --rm --network none -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 sh -c "python -m unittest discover -s tests/pipeline -p 'test_*.py'; python -m unittest discover -s tests/realtime -t . -p 'test_*.py'; python -m unittest discover -s tests/triage -t . -p 'test_*.py'; PYTHONPATH=services/shared:services/devices:services/attacker:scripts python -m unittest discover -s tests/generation -p 'test_*.py'"
 docker run --rm --network none --cpus 5 -e ANALYSIS_CPUS=5 -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 python -m src.reproduce A
@@ -97,14 +97,14 @@ The results zip is **not** needed for Level 2.
 bash:
 ```bash
 git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git && cd wardwatch
-curl -L -o v2.zip "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/<DATASET_ZIP>"
+curl -L -o v2.zip "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/wardwatch-v2-dataset.zip"
 ```
 PowerShell:
 ```powershell
 git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git; cd wardwatch
-Invoke-WebRequest -Uri "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/<DATASET_ZIP>" -OutFile v2.zip
+Invoke-WebRequest -Uri "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/wardwatch-v2-dataset.zip" -OutFile v2.zip
 ```
-Then follow the Level 2 block above with `v2.zip` in place of `../release/<DATASET_ZIP>` (check the same hash); the results zip for Level 1 always comes from `<RESULTS_LINK>`. Release page of the dataset:
+Then follow the Level 2 block above with `v2.zip` in place of `../release/wardwatch-v2-dataset.zip` (check the same hash); the results zip for Level 1 always comes from `<RESULTS_LINK>`. Release page of the dataset:
 <https://github.com/TheGuest55/wardwatch/releases/tag/v2-dataset>. Without access they return "404 Not Found": that is
 normal for a private repository; use the submission package.
 </details>
@@ -156,7 +156,7 @@ are never published; the page shows the recorded hash and this message instead. 
 
 ## 3. Level 2: reproduce the results from the v2 dataset
 
-**Downloads.** The dataset zip is `release/<DATASET_ZIP>` in the submission package (with access to the private repository: the asset of the `v2-dataset` release). Extract it **at the root of the
+**Downloads.** The dataset zip is `release/wardwatch-v2-dataset.zip` in the submission package (with access to the private repository: the asset of the `v2-dataset` release). Extract it **at the root of the
 `code` folder**: it carries the `data/...` paths. Afterwards these must exist:
 
 ```
@@ -167,7 +167,7 @@ data/raw/sessions/split_v2.json
 ```
 The dataset contains no run records and no raw PCAPs. **Level 2 needs nothing else**: not the results zip and not the run records. What your run is compared
 with is `reproduce/expected.json`, committed in the repository (see below).
-(Release hashes to check: `<DATASET_SHA256>` for the zip; to be filled in once the release check is done. The file inside it that matters, `testbed_windows.parquet`, must have the
+(Release hashes to check: `b455fd8468f9d04c8550eb0b8138ece971f54d9eb1f4ac95ff7ef6f9a01d1387` for the zip. The file inside it that matters, `testbed_windows.parquet`, must have the
 SHA-256 `58b3e6b6341521d9a4a58a393679766dfa05e2b92363125f6fb5b721d87e29a6`; `reproduce` checks this itself before training.)
 
 **Build the analysis image** (about 6 minutes, about 4 GB; the only step that needs the network):
