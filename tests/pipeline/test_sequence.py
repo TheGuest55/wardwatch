@@ -14,6 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from src import common
 from src.models import data as mdata
 from src.models import sequence as seq
+from tests.needs import needs
 
 V2 = common.PROCESSED_DIR / "v2"
 SPLIT_PATH = common.ROOT / "data" / "raw" / "sessions" / "split_v2.json"
@@ -318,8 +319,7 @@ class TestLoadSessions(unittest.TestCase):
                 seq.load_sessions(d, bad)
 
 
-@unittest.skipUnless((V2 / "sessions" / "r05.parquet").exists() and SPLIT_PATH.exists(),
-                     "real v2 data not available")
+@needs("DATASET", "GROUND_TRUTH")
 class TestRealV2(unittest.TestCase):
     K = 6
 

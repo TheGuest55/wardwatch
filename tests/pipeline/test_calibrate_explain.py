@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from tests.needs import needs
 from src.models.calibrate_explain import (FEATURE_TEXT, Calibrator, band, brier, confidence_cutoffs,
                                           ece, reliability_bins, select_method, top_reasons)
 
@@ -92,10 +93,9 @@ class TestReasons(unittest.TestCase):
         self.assertEqual([x["feature"] for x in r], ["tcp_syn", "tcp_rst"])
         self.assertIn("lowers", r[1]["text"])
 
+    @needs("DATASET")
     def test_every_model_input_has_plain_text(self):
         fl = Path("data/processed/v2/feature_list.json")
-        if not fl.exists():
-            self.skipTest("v2 dataset not present")
         feats = json.loads(fl.read_text())["features"]
         self.assertEqual(sorted(set(feats) - set(FEATURE_TEXT)), [])
 

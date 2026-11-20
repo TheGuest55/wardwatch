@@ -166,11 +166,13 @@ class TestIncidentsPageInABundle:
 
 
 # ------------------------------------------------------------------------------- real data, end to end
+REAL_MISSING = ([] if (config.data_root() / "runs" / "expA").is_dir() else ["the recorded runs/ (results zip)"]) + \
+    ([] if CREDS.is_file() else ["the lab credentials file (not published)"])
+
+
 @pytest.fixture(scope="module")
 def real_bundle(tmp_path_factory):
     src = config.data_root()
-    assert (src / "runs").is_dir(), f"real data root not found: {src}"
-    assert CREDS.is_file(), f"credentials file not found: {CREDS}"
     t = tmp_path_factory.mktemp("real")
     r = bundle.build(src, t / "out", CREDS, commit="0" * 40)
     empty = t / "empty_root"
@@ -179,6 +181,7 @@ def real_bundle(tmp_path_factory):
     return src, empty, r
 
 
+@pytest.mark.skipif(bool(REAL_MISSING), reason="needs " + " and ".join(REAL_MISSING) + ": see USER_MANUAL Level 3 (building the bundle needs the credentials file)")
 class TestRealData:
     def test_manifest_verifies_and_nothing_forbidden_is_inside(self, real_bundle):
         src, empty, r = real_bundle

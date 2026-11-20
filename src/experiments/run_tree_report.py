@@ -198,13 +198,15 @@ def run_a(name, env):
 
 
 # ------------------------------------------------------------------------------------ Experiment B
-def run_b(name, env):
+def run_b(name, env, only=None):
     ta.preflight(env)
     d = env.exp_dir("B")
     ds = ta._load(env, scale=False)
     feats = ds.feature_names
     c_tr, c_va, c_te = (tt.multiclass_targets(ds.meta(s)) for s in ("train", "val", "test"))
     classes = sorted(set(c_tr) - {"benign"})
+    if only:                                                # reproduce-B: a documented subset of the held-out classes
+        classes = [c for c in classes if c in only]
     details = {}
     for X in classes:
         ktr, kva = c_tr != X, c_va != X                       # X never reaches training or tuning

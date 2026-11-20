@@ -1,4 +1,4 @@
-.PHONY: check-session triage replay gen up down smoke session sessions features dataset datacheck test logs clean cic dashboard-image dashboard-test dashboard
+.PHONY: reproduce-A reproduce-B reproduce-lstm check-session triage replay gen up down smoke session sessions features dataset datacheck test logs clean cic dashboard-image dashboard-test dashboard
 
 # Regenerate docker-compose.yml, broker ACLs/accounts and .env from config/ward.json.
 gen:
@@ -61,6 +61,19 @@ triage:
 replay:
 	@test -n "$(SESSION)" || { echo "usage: make replay SESSION=r05 [ARGS=...]"; exit 2; }
 	bash scripts/analysis.sh replay $(SESSION) $(ARGS)
+
+# Reproduce recorded results from the v2 dataset (USER_MANUAL Level 2). Output only under data/processed/v2/repro/.
+#   make reproduce-A      Experiment A, seed 0: XGBoost, RF, IF, autoencoder, rule baseline
+#   make reproduce-B      Experiment B, seed 0, two held-out classes (recon_scan, spoof_vitals): XGBoost, IF, rule baseline
+#   make reproduce-lstm   LSTM, seed 0, k=12 hidden=32
+reproduce-A:
+	bash scripts/analysis.sh reproduce A
+
+reproduce-B:
+	bash scripts/analysis.sh reproduce B
+
+reproduce-lstm:
+	bash scripts/analysis.sh reproduce lstm
 
 # CICIoMT2024 windows for Experiment C: the 19 single-attacker (DoS) PCAPs only, DDoS excluded.
 # Dry run (check and list the staged files, extract nothing): bash scripts/extract_cic_dos.sh --list

@@ -11,6 +11,7 @@ import pandas as pd
 from src.triage import metrics as tm
 from src.triage import pcap_slice as ps
 from src.triage import verdict as V
+from tests.needs import needs
 
 
 class TestGroupingAndTTD(unittest.TestCase):
@@ -145,6 +146,7 @@ class TestIndexedSliceEqualsFullScan(unittest.TestCase):
                 self.assertEqual(full["sha256"], idx["sha256"], (a, b))
                 self.assertEqual(full["n_packets"], idx["n_packets"])
 
+    @needs("RAW")
     def test_real_r05_ranges(self):
         pcaps = sorted(Path("data/raw/sessions/r05/pcap").glob("*.pcap"))
         first = ps.get_index(pcaps[0]).ts[0]
