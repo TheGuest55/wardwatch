@@ -7,7 +7,8 @@ runs/": every run record load_records() would read (the same discovery rule: any
 a metrics dict), the prediction parquets and LSTM curve files those records point to (loaders._pred_candidates and
 load_lstm_curves), runs/lstm/selected_config.json, runs/lstm/explanations.json, runs/calibration/<model>_details.json,
 runs/expA/autoencoder_details.json, runs/bootstrap/*.json, runs/expA/predictions/<model>_multiclass_s0.parquet,
-testbed_windows.parquet (the dataset summary) and live/incidents.jsonl.
+testbed_windows.parquet (the dataset summary), live/incidents.jsonl and live/recorded/*.jsonl (a recorded alert stream of one real
+replay, which the "Live alerts" page plays back; live/alerts_stream.jsonl, the file a running replay writes, and live/demo/ are NOT bundled).
 
 WHAT IS EXCLUDED: PCAP slices (live/slices, triage/slices: they hold plaintext lab MQTT credentials), models/, logs, the
 peers sidecars, data/raw, and every other file.
@@ -69,6 +70,8 @@ def collect(root):
         found.add(root / "runs" / "expA" / "predictions" / f"{m}_multiclass_s0.parquet")
     for p in (root / "runs" / "bootstrap").glob("*.json"):
         found.add(p.resolve())
+    for p in (root / "live" / "recorded").glob("*.jsonl"):
+        found.add(p.resolve())
     out = []
     for p in found:
         if not p.is_file():
@@ -116,6 +119,8 @@ def check_paths(rels):
     for rel in rels:
         p = Path(rel)
         low = rel.lower()
+        if rel == "live/alerts_stream.jsonl" or rel.startswith("live/demo/"):
+            bad.append(rel)
         if low.endswith((".pcap", ".pcapng", ".log")) or set(p.parts) & set(EXCLUDED_PARTS) \
                 or SECRET_NAME.search(p.name) or p.name.startswith("peers_"):
             bad.append(rel)

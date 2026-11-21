@@ -1,4 +1,4 @@
-.PHONY: reproduce-A reproduce-B reproduce-lstm check-session triage replay gen up down smoke session sessions features dataset datacheck test logs clean cic dashboard-image dashboard-test dashboard
+.PHONY: live-demo reproduce-A reproduce-B reproduce-lstm check-session triage replay gen up down smoke session sessions features dataset datacheck test logs clean cic dashboard-image dashboard-test dashboard
 
 # Regenerate docker-compose.yml, broker ACLs/accounts and .env from config/ward.json.
 gen:
@@ -97,3 +97,32 @@ dashboard:
 	  --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges \
 	  -v "$(CURDIR):/work:ro" -v "$(or $(DATA),$(CURDIR)/data/processed/v2):/data:ro" \
 	  -e WARDWATCH_DATA_ROOT=/data wardwatch-dashboard:0.1.0
+
+# Live alerts demo: the dashboard (detached) plus an alert feed for its "Live alerts" page.
+#   make live-demo SESSION=r05 SPEED=10 [DATA=data/processed/v2] [DASH_NAME=wardwatch-live] [DASH_PORT=8501]
+# With the PCAPs and the trained models (full data) it runs a LIVE replay in the analysis image; otherwise it plays back the recorded
+# stream (live/recorded/alerts_stream_$(SESSION).jsonl, from the results zip) in the dashboard image. Only <DATA>/live is written.
+# Stop with: docker rm -f $(DASH_NAME) wardwatch-live-feed     (PowerShell form: USER_MANUAL, "Watch alerts live")
+SESSION ?= r05
+SPEED ?= 10
+DATA ?= $(if $(wildcard $(CURDIR)/data/processed/v2/runs),$(CURDIR)/data/processed/v2,$(CURDIR)/results)
+DASH_NAME ?= wardwatch-live
+DASH_PORT ?= 8501
+live-demo:
+	mkdir -p "$(DATA)/live"
+	docker rm -f $(DASH_NAME) wardwatch-live-feed >/dev/null 2>&1 || true
+	docker run -d --rm --name $(DASH_NAME) -p $(DASH_PORT):8501 \
+	  --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges \
+	  -v "$(CURDIR):/work:ro" -v "$(DATA):/data:ro" -e WARDWATCH_DATA_ROOT=/data wardwatch-dashboard:0.1.0
+	@if [ -d "$(CURDIR)/data/raw/sessions/$(SESSION)/pcap" ] && [ -f "$(CURDIR)/data/processed/v2/models/expA/xgboost_binary_seed0.json" ]; then \
+	  echo "live replay of $(SESSION) at speed $(SPEED)"; \
+	  docker run -d --rm --name wardwatch-live-feed --network none --cpus 2 \
+	    -v "$(CURDIR):/work:ro" -v "$(CURDIR)/data/raw:/work/data/raw:ro" -v "$(CURDIR)/data/processed:/work/data/processed:ro" \
+	    -v "$(CURDIR)/data/processed/v2/live:/work/data/processed/v2/live" -w /work \
+	    wardwatch-analysis:0.2.0 python -m src.experiments.run_e --demo --session $(SESSION) --speed $(SPEED); \
+	else \
+	  echo "no PCAPs or models here: playing back the recorded stream of $(SESSION) at speed $(SPEED)"; \
+	  docker run -d --rm --name wardwatch-live-feed --network none -v "$(CURDIR):/work:ro" -v "$(DATA):/data" -w /work \
+	    wardwatch-dashboard:0.1.0 python -m src.realtime.playback --data-root /data --session $(SESSION) --speed $(SPEED); \
+	fi
+	@echo "open http://localhost:$(DASH_PORT) , page 'Live alerts'"

@@ -34,6 +34,11 @@ def full(root):
     (root / "live" / "slices" / "x.pcap").write_bytes(b"\xd4\xc3\xb2\xa1")
     (root / "live" / "incidents.jsonl").write_text(json.dumps({"incident_id": "r05-n-1", "session": "r05", "verdict": "No alert",
                                                                 "pcap_slice": "live/slices/x.pcap", "pcap_sha256": "ab" * 32}) + "\n")
+    (root / "live" / "recorded").mkdir()
+    (root / "live" / "recorded" / "alerts_stream_r05.jsonl").write_text(json.dumps({"header": {"mode": "recorded", "session": "r05"}}) + "\n")
+    (root / "live" / "alerts_stream.jsonl").write_text(json.dumps({"header": {"mode": "live"}}) + "\n")     # what a running replay writes
+    (root / "live" / "demo").mkdir()
+    (root / "live" / "demo" / "incidents_r05.jsonl").write_text("{}\n")
     (root / "runs" / "train.log").write_text("log line\n")
     (root / "models" / "expA").mkdir(parents=True)
     (root / "models" / "expA" / "m.json").write_text("{}")
@@ -52,6 +57,14 @@ class TestCollect:
         assert "runs/lstm/curves/A_k12_h32_s0.json" in rels
         assert "testbed_windows.parquet" in rels and "live/incidents.jsonl" in rels
         assert not any(r.endswith(("not_a_record.json", "broken.json")) for r in rels)           # not run records
+
+    def test_includes_the_recorded_alert_stream_and_excludes_a_running_replays_files(self, full):
+        rels = bundle.collect(full)
+        assert "live/recorded/alerts_stream_r05.jsonl" in rels
+        assert "live/alerts_stream.jsonl" not in rels and not any(r.startswith("live/demo/") for r in rels)
+        for bad in ("live/alerts_stream.jsonl", "live/demo/incidents_r05.jsonl"):
+            with pytest.raises(SystemExit):
+                bundle.check_paths([bad])
 
     def test_excludes_slices_models_logs_peers_and_pcaps(self, full):
         rels = bundle.collect(full)
@@ -206,7 +219,7 @@ class TestRealData:
     def test_all_pages_load_from_an_empty_root_holding_only_the_bundle(self, real_bundle, monkeypatch):
         _, empty, _ = real_bundle
         pages = [Path("src/dashboard/app.py"), *sorted(Path("src/dashboard/pages").glob("*.py"))]
-        assert len(pages) == 7
+        assert len(pages) == 8
         for page in pages:
             at = run(str(page), empty, monkeypatch)
             assert not at.exception, (page.name, [e.value for e in at.exception])
