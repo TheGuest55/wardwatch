@@ -27,6 +27,19 @@ def show():
     c[4].metric("Open incidents", len(rd.open_incidents()))
     st.caption(f"Window time of the latest event: {rd.last_ts or 'none yet'} · {rd.n_events} events"
                + (f" · {rd.bad_lines} unreadable line(s) skipped" if rd.bad_lines else ""))
+    st.subheader("Ward map")
+    try:
+        from src import common
+        rows = live.ward_tiles(common.load_config(), rd.latest)
+    except Exception as ex:                                   # no config next to the code: the rest of the page still works
+        rows = None
+        st.caption(f"ward map not available ({type(ex).__name__})")
+    if rows:
+        for row in rows:
+            for col, t in zip(st.columns(3), row):
+                col.markdown(live.tile_html(t), unsafe_allow_html=True)
+        st.caption("Each tile shows the latest alert of that host (verdict colour: red known attack, orange possible novel, yellow "
+                   "detectors disagree; grey none yet) and its calibrated p. Display only; the attacker's tile appears once it has alerted.")
     st.subheader("Open incidents")
     op = rd.open_incidents()
     if op:

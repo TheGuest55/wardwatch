@@ -108,3 +108,36 @@ class TestReader:
         r = live.StreamReader(tmp_path / "live" / "alerts_stream.jsonl")
         r.refresh()
         assert r.bad_lines == 1 and r.n_events == 1
+
+
+class TestWardMap:
+    CFG = {"network": {"subnet": "172.28.10.0/24"}, "broker": {"ip": "172.28.10.10"}, "nurse": {"ip": "172.28.10.20"},
+           "attacker": {"ip": "172.28.10.66"}, "beds": 4}
+
+    def test_tiles_cover_four_beds_nurse_broker_and_the_attacker_only_once_seen(self):
+        rows = live.ward_tiles(self.CFG, {})
+        assert [len(r) for r in rows] == [3, 3, 3, 3, 2]
+        labels = [t["label"] for r in rows for t in r]
+        assert labels[:3] == ["bed 1 monitor", "bed 1 pump", "bed 1 wearable"] and "nurse station" in labels and "broker" in labels
+        assert "attacker" not in labels
+        assert all(t["verdict"] is None for r in rows for t in r)
+        seen = live.ward_tiles(self.CFG, {"172.28.10.66": alert("2026-11-09T00:00:05Z") | {"host_ip": "172.28.10.66"}})
+        assert seen[-1][-1]["label"] == "attacker"
+
+    def test_each_tile_takes_the_latest_verdict_and_p(self):
+        latest = {"172.28.10.21": alert("2026-11-09T00:00:05Z", KNOWN, p=0.91) | {"host_ip": "172.28.10.21"},
+                  "172.28.10.22": alert("2026-11-09T00:00:10Z", REVIEW, p=0.2) | {"host_ip": "172.28.10.22"}}
+        t = {x["label"]: x for r in live.ward_tiles(self.CFG, latest) for x in r}
+        assert t["bed 2 monitor"]["verdict"] == KNOWN and t["bed 2 monitor"]["p"] == 0.91
+        assert t["bed 2 pump"]["verdict"] == REVIEW
+        assert t["bed 2 monitor"]["bg"] != t["bed 2 pump"]["bg"] != t["bed 1 monitor"]["bg"]
+
+    @pytest.mark.parametrize("mode", ["live", "playback"])
+    def test_the_page_shows_the_map_in_both_modes(self, tmp_path, monkeypatch, mode):
+        write(tmp_path, [head(mode), alert("2026-11-09T00:00:05Z") | {"host_ip": "172.28.10.21"}])
+        at = run(PAGE, tmp_path, monkeypatch)
+        assert not at.exception
+        html = " ".join(m.value for m in at.markdown)
+        assert "bed 2 monitor" in html and "bed 4 wearable" in html and "nurse station" in html and "broker" in html
+        assert "Known attack (type named) · p=0.99" in html                      # bed 2 monitor's tile (172.28.10.21)
+        assert "attacker" not in html.replace("attacker's tile", "")
