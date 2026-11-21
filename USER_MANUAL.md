@@ -28,7 +28,7 @@ wardwatch-submission/
 have access: those commands are in the box "If you have access to the private repository" at the end of this section.)
 
 Run every command from the folder named in the first line of the block. **Check each zip against its hash before you use it**:
-the results zip must have SHA-256 `<RESULTS_ZIP_SHA256>` and the dataset zip `e2d3ea557eb48554ac263e63dfd3be0e548e8dec8662baff531b9cfc2b14d87e` (the results hash is filled in when that zip is published; see "Downloads" under Level 1 and
+the results zip must have SHA-256 `e1e26832c64c93155b7686bcc644eacc28a219c55acec9fd7808fcaec0901d3a` and the dataset zip `e2d3ea557eb48554ac263e63dfd3be0e548e8dec8662baff531b9cfc2b14d87e` (see "Downloads" under Level 1 and
 Level 2). bash: `sha256sum <file>`. PowerShell: `Get-FileHash <file> -Algorithm SHA256`.
 
 ### Level 1 in 5 commands (view the results)
@@ -49,7 +49,7 @@ Expand-Archive ../<RESULTS_ZIP> -DestinationPath results
 docker build -t wardwatch-dashboard:0.1.0 docker/dashboard
 docker run --rm --name wardwatch-dashboard -p 8501:8501 --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges -v "${PWD}:/work:ro" -v "${PWD}/results:/data:ro" -e WARDWATCH_DATA_ROOT=/data wardwatch-dashboard:0.1.0
 ```
-**Expected:** the first command prints the results hash `<RESULTS_ZIP_SHA256>` (compare it). The last prints `You can now view your Streamlit app in your browser.` Open <http://localhost:8501>: the Overview page shows
+**Expected:** the first command prints the results hash `e1e26832c64c93155b7686bcc644eacc28a219c55acec9fd7808fcaec0901d3a` (compare it). The last prints `You can now view your Streamlit app in your browser.` Open <http://localhost:8501>: the Overview page shows
 a headline table with six models (XGBoost, Random Forest, autoencoder, Isolation Forest, LSTM, rule baseline). Stop with Ctrl+C.
 
 ### Level 2 in 5 commands (reproduce)
@@ -150,7 +150,7 @@ normal for a private repository; use the submission package.
 
 bash: `sha256sum <RESULTS_ZIP>`   PowerShell: `Get-FileHash <RESULTS_ZIP> -Algorithm SHA256`
 
-The expected SHA-256 is `<RESULTS_ZIP_SHA256>` (to be filled in when the zip is published; `BUNDLE.json` inside the zip records the commit and build date it was made from).
+The expected SHA-256 is `e1e26832c64c93155b7686bcc644eacc28a219c55acec9fd7808fcaec0901d3a` (`BUNDLE.json` inside the zip records the commit, 483a3ca, and the build date it was made from).
 
 **Unzip, build, run.** The zip holds `runs/`, `live/incidents.jsonl`, `testbed_windows.parquet`, `MANIFEST.sha256` and `BUNDLE.json`; unzip it into a folder called
 `results`. Verify the files against the manifest (bash): `( cd results && sha256sum -c MANIFEST.sha256 )`. Build the dashboard image once
