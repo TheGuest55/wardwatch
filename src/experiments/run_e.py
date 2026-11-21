@@ -103,16 +103,17 @@ def _pcts(a):
     return {"median": float(np.median(a)), "p95": float(np.percentile(a, 95)), "max": float(a.max()), "n": int(len(a))}
 
 
-def replay_session(session, pair, key, gap, speed=1.0, max_seconds=None, live_dir=LIVE, packet_iter=None):
+def replay_session(session, pair, key, gap, speed=1.0, max_seconds=None, live_dir=LIVE, packet_iter=None, alerts=None, with_post=True):
     """Run the replay. Returns a dict with the rows, per-row results, tick timings, stats and the triager."""
     cfg = common.load_config()
     roles = common.ip_role_map(cfg)
     wb = windows.WindowBuilder(session, SENTINEL, SENTINEL, roles, with_peers=True)
     live_dir = Path(live_dir)
     live_dir.mkdir(parents=True, exist_ok=True)
-    post = LivePost(pair, session, live_dir, live_dir / f"incidents_{session}.jsonl")
+    post = LivePost(pair, session, live_dir, live_dir / f"incidents_{session}.jsonl") if with_post else None
     tr = engine.Triager(session, roles, key, gap, post=post)
     rows_all, tick_s, tick_n, results, tick_done = [], [], [], {}, {}
+    emit = []
     peers = {}
 
     def on_tick(rows, ctx):
@@ -127,6 +128,8 @@ def replay_session(session, pair, key, gap, speed=1.0, max_seconds=None, live_di
         for idx in np.split(np.arange(len(rows)), cuts):
             tr.window(int(wins[idx[0]]), [rows[i]["host_mac"] for i in idx], [rows[i]["host_ip"] for i in idx],
                       X[idx], {k: v[idx] for k, v in res.items()}, peers)
+            if alerts is not None:
+                emit.append((int(wins[idx[0]]), idx))
         dt = time.perf_counter() - t0
         done_at = ctx["replay_now"] + dt * (speed or 1.0)
         tick_s.append(dt)
@@ -136,12 +139,20 @@ def replay_session(session, pair, key, gap, speed=1.0, max_seconds=None, live_di
             results[k] = {c: res[c][i] for c in ("raw", "p", "band", "if_score", "anomalous", "cell", "named")}
             tick_done[k] = done_at
             rows_all.append({k2: v for k2, v in r.items() if k2 != "peer_pkts"})
+        if alerts is not None:                    # after the timed path: the alert stream (never in an Experiment E run)
+            for win, idx in emit:
+                alerts.tick(tr, win, [rows[i]["host_mac"] for i in idx], [rows[i]["host_ip"] for i in idx],
+                            {k: v[idx] for k, v in res.items()}, peers)
+            emit.clear()
 
     stats = stream.ReplayStats()
     it = packet_iter if packet_iter is not None else stream.session_packets(session, max_seconds=max_seconds)
     stream.replay(it, wb, on_tick, speed=speed, stats=stats)
     tr.finish()
-    post.close()
+    if alerts is not None:
+        alerts.finish(tr)
+    if post is not None:
+        post.close()
     return {"rows": rows_all, "results": results, "tick_done": tick_done, "tick_s": tick_s, "tick_n": tick_n,
             "stats": stats, "triager": tr, "builder": wb, "post": post, "peers": peers}
 
@@ -278,13 +289,55 @@ def run(session, speed=1.0, max_seconds=None, for_report=False, live_dir=LIVE, e
     return rec
 
 
+def demo(session, speed=10.0, max_seconds=None, record=None, live=LIVE, a_record=offline.RUNS / "triage_A.json"):
+    """The live-alerts feed (dashboard page 8). Writes ONLY <live>/alerts_stream.jsonl (plus <live>/demo/): no run record, no
+    incidents file, no PCAP slices outside <live>/demo/ (they hold credentials), never for_report. With `record` it is one full
+    replay saved to that path, kept only if its incidents equal the offline incidents of the session (else STOP, nothing kept)."""
+    from ..realtime import alerts as alerts_mod
+    if record and max_seconds:
+        raise SystemExit("--record needs a full replay (no --max-seconds)")
+    a = json.loads(Path(a_record).read_text())
+    key, gap = a["params"]["grouping_key"], a["params"]["grouping_gap_s"]
+    pair = Pair()
+    live = Path(live)
+    target = Path(record) if record else live / "alerts_stream.jsonl"
+    tmp = target.with_name(target.name + ".partial") if record else target
+    head = alerts_mod.header("recorded" if record else "live", session, speed, **({"recorded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())} if record else {}))
+    sink = alerts_mod.AlertSink(tmp, head)
+    print(f"[demo] replay {session} at speed {speed} -> {target}", flush=True)
+    out = replay_session(session, pair, key, gap, speed, max_seconds, live / "demo", alerts=sink, with_post=bool(record))
+    late = out["builder"].late_packets
+    tr = out["triager"]
+    print(f"[demo] {len(tr.records)} incidents, late packets {late}", flush=True)
+    if record:
+        try:
+            if late:
+                raise AssertionError(f"{late} late packets")
+            off = [r for r in (json.loads(l) for l in (offline.TRI / "incidents_offline.jsonl").read_text().splitlines())
+                   if r["session"] == session]
+            eq = compare_incidents(list(tr.records), off)
+        except AssertionError:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+        Path(tmp).replace(target)
+        print(f"[demo] recording kept: {target} (incidents equal the offline incidents: {json.dumps(eq)})", flush=True)
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
+    ap.add_argument("--demo", action="store_true", help="write only live/alerts_stream.jsonl (+ live/demo/); no E record")
+    ap.add_argument("--record", default=None, help="with --demo: save one full replay here if its incidents equal the offline ones")
     ap.add_argument("--session", required=True)
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--max-seconds", type=float, default=None)
     ap.add_argument("--for-report", action="store_true")
     args = ap.parse_args(argv)
+    if args.demo or args.record:
+        if args.for_report:
+            raise SystemExit("--demo / --record never write a report-grade run")
+        demo(args.session, args.speed, args.max_seconds, args.record)
+        return
     try:
         run(args.session, args.speed, args.max_seconds, args.for_report)
     except (AssertionError, SystemExit) as e:

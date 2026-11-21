@@ -91,6 +91,25 @@ made on (SHA-256 in `expected.json`) and stops with `FAIL: wrong dataset` otherw
 `RESULT A: PASS (30 comparisons, ...)` (about 3 minutes on 5 CPUs). `reproduce B` ends `RESULT B: PASS (36 comparisons, ...)` (about 1 minute).
 The results zip is **not** needed for Level 2.
 
+### Watch alerts live (optional)
+
+The dashboard's **Live alerts** page (page 8, refreshes every 2 seconds) shows an alert stream as it arrives: newest alerts first, counts per verdict and the open incidents. It has two modes, and its banner says which one you are looking at:
+- **Playback** (needs only the results zip from Level 1): replays the *recorded* alert stream of a real replay of session r05 (the banner shows the recording date and commit). The recording is `live/recorded/alerts_stream_r05.jsonl` in the results zip; it is played back at `SPEED` times real time (default 10, so a few minutes).
+- **Live** (needs the raw PCAPs and the trained models, i.e. the authors' full-data checkout): replays session r05 from its PCAPs through the deployed detector pair; the banner reads "Live: replaying session r05 from PCAPs".
+
+bash (from the `code` folder; `DATA=results` is the folder the results zip was unzipped to; the Level 1 dashboard container must be stopped first because both use port 8501, or add `DASH_PORT=8502`):
+```bash
+make live-demo SESSION=r05 SPEED=10 DATA=results
+```
+This starts the dashboard (container `wardwatch-live`) and the feed (container `wardwatch-live-feed`) in the background; open <http://localhost:8501> and choose **Live alerts**. Stop with `docker rm -f wardwatch-live wardwatch-live-feed`. Without `DATA`, a full-data checkout uses `data/processed/v2`.
+
+PowerShell (playback; two `docker run` lines, the first is the dashboard, the second the feed; both mount the unzipped results folder, only the feed may write it):
+```powershell
+docker run -d --rm --name wardwatch-live -p 8501:8501 --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges -v "${PWD}:/work:ro" -v "${PWD}/results:/data:ro" -e WARDWATCH_DATA_ROOT=/data wardwatch-dashboard:0.1.0
+docker run -d --rm --name wardwatch-live-feed --network none -v "${PWD}:/work:ro" -v "${PWD}/results:/data" -w /work wardwatch-dashboard:0.1.0 python -m src.realtime.playback --data-root /data --session r05 --speed 10
+```
+The only file that is written is `live/alerts_stream.jsonl` under the folder you mounted as `/data`; no PCAP slices are written. The page shows "Waiting for a replay" until the feed has started.
+
 <details>
 <summary>If you have access to the private repository (git clone and release download commands)</summary>
 
