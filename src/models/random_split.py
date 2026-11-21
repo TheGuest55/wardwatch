@@ -39,6 +39,8 @@ from . import tracking
 from .train_tree import (DATASET, GRIDS, SPLIT, V2, best_threshold, grid, importances,
                          make_model, multiclass_targets)
 
+MODELS = sorted(GRIDS) + ["autoencoder"]
+
 OUT_DIR = V2 / "runs" / "random_split"
 WINDOW_S = 5
 
@@ -105,9 +107,32 @@ def evaluate(name, Xtr, ytr, Xva, yva, Xte, yte, cls_te, seed, feats):
     return m, best["params"], importances(name, clf, feats)[:10], score, pred
 
 
+def evaluate_ae(params, Xtr, ytr, Xva, yva, Xte, yte, cls_te, seed, feats):
+    """The autoencoder under the same protocol: the scaler is fit on the TRAIN part (all its rows, as Experiment A's Dataset does),
+    the model is trained on the benign rows of the train part only (benign validation rows for early stopping), the threshold is the
+    validation max-F1 one, the test part is scored once. The architecture is the one Experiment A selected (not searched again)."""
+    from sklearn.preprocessing import StandardScaler
+    from . import autoencoder as ae
+    from . import train_autoencoder as tta
+    sc = StandardScaler().fit(Xtr)
+    Xtr_s, Xva_s, Xte_s = sc.transform(Xtr), sc.transform(Xva), sc.transform(Xte)
+    score_fn, info, model = tta._fit_detector("autoencoder", params, seed, Xtr_s[ytr == 0], Xva_s[yva == 0])
+    s_va, s_te = score_fn(Xva_s), score_fn(Xte_s)
+    thr = ae.pick_threshold(yva, s_va)
+    pred = ae.predict(s_te, thr).astype(bool)
+    m = mmetrics.binary_metrics(yte, y_score=s_te, y_pred=pred.astype(int))
+    m["fpr"] = float((pred & (yte == 0)).sum() / max((yte == 0).sum(), 1))
+    m["threshold"] = float(thr)
+    m["val_f1"] = float(mmetrics.binary_metrics(yva, y_score=s_va, y_pred=ae.predict(s_va, thr))["f1"])
+    for c in sorted(set(cls_te) - {"benign"}):
+        m[f"recall_{c}"] = float(pred[cls_te == c].mean())
+    top = [{"feature": f, "share": v} for f, v in tta.per_feature_error(model, Xte_s, feats)[:10]]
+    return m, params, top, s_te, pred
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", choices=sorted(GRIDS), required=True)
+    ap.add_argument("--model", choices=MODELS, required=True)
     ap.add_argument("--seeds", type=int, default=1,
                     help="number of seeds (default 1, as fixed in the proposal)")
     ap.add_argument("--save-predictions", action="store_true",
@@ -116,6 +141,13 @@ def main():
     ap.add_argument("--no-mlflow", action="store_true")
     args = ap.parse_args()
     name = args.model
+    is_ae = name == "autoencoder"
+    ae_params = None
+    if is_ae:
+        from . import train_autoencoder as tta
+        ae_params = tta.load_selected("autoencoder", tta.Env())            # the architecture Experiment A selected
+        if (OUT_DIR / "autoencoder.json").exists():
+            raise SystemExit(f"{OUT_DIR / 'autoencoder.json'} exists: an existing record is never overwritten")
 
     df, fl = mdata.load_dataset(DATASET, V2 / "feature_list.json")
     ds = mdata.Dataset(df, fl, scale=False)
@@ -135,8 +167,12 @@ def main():
     for seed in range(args.seeds):
         rand_idx = random_split_indices(cls, sizes, seed)
         for kind, (tr, va, te) in (("time", time_idx), ("random", rand_idx)):
-            m, params, imp, score, pred = evaluate(name, X[tr], y[tr], X[va], y[va], X[te], y[te],
-                                                   cls[te], seed, feats)
+            if is_ae:
+                m, params, imp, score, pred = evaluate_ae(ae_params, X[tr], y[tr], X[va], y[va], X[te], y[te],
+                                                          cls[te], seed, feats)
+            else:
+                m, params, imp, score, pred = evaluate(name, X[tr], y[tr], X[va], y[va], X[te], y[te],
+                                                       cls[te], seed, feats)
             if kind == "random" and seed == 0 and args.save_predictions:
                 from .predictions import save_predictions
                 print(f"  saved {save_predictions(meta.iloc[te], y[te], score, pred, 'random', name)}")
@@ -163,12 +199,14 @@ def main():
     det_path = OUT_DIR / f"{name}_details.json"
     det_path.write_text(json.dumps(details, indent=2, default=str))
     rec = tracking.build_run_record(
-        experiment="random-split-reference", model=name, role="classifier",
-        params={"grid": GRIDS[name], "seeds": list(range(args.seeds)),
+        experiment="random-split-reference", model=name, role="anomaly" if is_ae else "classifier",
+        params={"grid": GRIDS[name] if not is_ae else {k: list(v) if isinstance(v, tuple) else v for k, v in ae_params.items()},
+                "seeds": list(range(args.seeds)),
                 "threshold_rule": "val-max-F1", "random_split": "stratified by class, same sizes",
-                "split_sizes": sizes},
+                "split_sizes": sizes, **({"trained_on": "benign-only (train part)"} if is_ae else {})},
         metrics=agg, tags={"dataset": "v2", "details": str(det_path),
-                           "note": "reference only; never used for model selection"},
+                           "note": "reference only; never used for model selection",
+                           **({"post_freeze": True, "authorised": "user, 20-21 Nov, after the 19 Nov analysis freeze"} if is_ae else {})},
         seed=0, split_path=str(SPLIT), dataset_path=str(DATASET), for_report=args.for_report)
     tracking.log_run(rec, json_path=str(OUT_DIR / f"{name}.json"), use_mlflow=not args.no_mlflow)
 
