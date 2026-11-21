@@ -324,8 +324,81 @@ def demo(session, speed=10.0, max_seconds=None, record=None, live=LIVE, a_record
     return out
 
 
+def live_run(session, pcap_dir, gt_dir, stop_file=None, idle_stop_s=120.0, live=LIVE, exp_dir=EXPE, for_report=False,
+             a_record=offline.RUNS / "triage_A.json", wait_first_s=600.0):
+    """A GENUINE live run: follow the capture that tcpdump is writing in `pcap_dir` (src/realtime/livetail.py) through the same
+    window builder, pair, triage and alert writer as the replay, speed 1 (the wall clock IS the packet clock). Writes
+    <live>/alerts_stream.jsonl (mode live) while it runs and, at the end, the experiment record "E-live": detection per attack,
+    time to detect, tick latency against the 50 ms budget and the incidents. `gt_dir` holds the session's ground_truth.jsonl,
+    used ONLY for this evaluation. Not used by any decision. The session is never part of a split."""
+    from ..labels import label as lab
+    from ..realtime import alerts as alerts_mod
+    from ..realtime import livetail
+    a = json.loads(Path(a_record).read_text())
+    key, gap = a["params"]["grouping_key"], a["params"]["grouping_gap_s"]
+    pair = Pair()
+    live = Path(live)
+    head = alerts_mod.header("live", session, 1.0, capture="tcpdump on br-ward, followed while written")
+    sink = alerts_mod.AlertSink(live / "alerts_stream.jsonl", head)
+    stop = (lambda: Path(stop_file).exists()) if stop_file else (lambda: False)
+    print(f"[live] following {pcap_dir} for {session} (idle stop {idle_stop_s} s, stop file {stop_file})", flush=True)
+    it = livetail.follow_packets(pcap_dir, idle_stop_s=idle_stop_s, stop=stop, wait_first_s=wait_first_s)
+    out = replay_session(session, pair, key, gap, 1.0, None, live / "demo", packet_iter=it, alerts=sink, with_post=False)
+    tr, st = out["triager"], out["stats"]
+    summ = st.summary()
+    late = out["builder"].late_packets
+    print(f"[live] {summ['n_packets']} packets, {summ['n_ticks']} ticks, wall {summ['wall_s']:.0f} s, late packets {late}, "
+          f"{len(tr.records)} incidents", flush=True)
+    ivs, a_ip, a_mac = lab.load_ground_truth(Path(gt_dir) / session)
+    W = int(common.WINDOW_SECONDS)
+    from ..triage import verdict as V
+    per_run = []
+    for iv in ivs:
+        wins = [r for r in out["rows"] if (r["host_mac"] == a_mac or r["host_ip"] == a_ip)
+                and iv["start"] <= r["window_start_epoch"] and r["window_start_epoch"] + W <= iv["end"]]
+        al = [r for r in wins if V.is_alerting(out["results"][(r["host_mac"], r["window_start_epoch"])]["cell"])]
+        first = min((out["tick_done"][(r["host_mac"], r["window_start_epoch"])] for r in al), default=None)
+        inc = [r["incident_id"] for r in tr.records
+               if common.iso_to_epoch(r["first_seen"]) < iv["end"] and common.iso_to_epoch(r["last_seen"]) + W > iv["start"]]
+        per_run.append({"run_id": iv["run_id"], "class": iv["class"], "windows": len(wins), "alerting_windows": len(al),
+                        "detected": bool(al), "ttd_s": None if first is None else float(first - iv["start"]), "incidents": inc})
+    in_attack = lambda r: any(iv["start"] <= r["window_start_epoch"] + W and r["window_start_epoch"] <= iv["end"] for iv in ivs)
+    false_alarm = [r for r in out["rows"] if V.is_alerting(out["results"][(r["host_mac"], r["window_start_epoch"])]["cell"]) and not in_attack(r)]
+    tick_ms = np.array(out["tick_s"]) * 1000
+    lat = {"tick_ms": _pcts(tick_ms), "rows_per_tick": _pcts(out["tick_n"])}
+    metrics = {"tick_median_ms": lat["tick_ms"]["median"], "tick_p95_ms": lat["tick_ms"]["p95"], "tick_max_ms": lat["tick_ms"]["max"],
+               "ticks_over_budget": int((tick_ms > BUDGET_MS).sum()), "budget_ms": BUDGET_MS, "n_ticks": summ["n_ticks"],
+               "n_packets": summ["n_packets"], "lag_s_max": summ["lag_s_max"], "lag_s_p95": summ["lag_s_p95"], "wall_s": summ["wall_s"],
+               "late_packets": late, "n_incidents": len(tr.records), "attacks": len(per_run),
+               "attacks_detected": sum(1 for r in per_run if r["detected"]),
+               "ttd_median_s": float(np.median([r["ttd_s"] for r in per_run if r["ttd_s"] is not None])) if any(r["ttd_s"] is not None for r in per_run) else None,
+               "false_alarm_windows": len(false_alarm), "rows": len(out["rows"])}
+    rec = tracking.build_run_record(
+        "E-live", "xgboost+isolation_forest", "pair",
+        params={"session": session, "speed": 1.0, "grace_s": stream.GRACE_S, "grouping_key": key, "grouping_gap_s": gap, "threads": 1,
+                "capture": "tcpdump on the lab bridge, followed while written (src/realtime/livetail.py)"},
+        metrics=metrics,
+        tags={"stage": "E-live", "per_attack": per_run, "latency": lat, "replay_stats": summ,
+              "incidents": [{k: r[k] for k in ("incident_id", "first_seen", "last_seen", "verdict", "cell", "n_alerts", "attack_class", "source", "target_host")} for r in tr.records],
+              "false_alarm_note": "alerting windows outside every logged attack interval (ground truth used for evaluation only)",
+              "cpu": {"cpu_count": os.cpu_count(), "platform": platform.platform()},
+              "load": "the lab (broker, 12 devices, attacker, capture) ran on the same machine as this pipeline"},
+        seed=0, split_path=str(tt.SPLIT), dataset_path=str(tt.DATASET), for_report=for_report)
+    path = Path(exp_dir) / f"E-live_{session}.json"
+    if path.exists():
+        raise SystemExit(f"{path} exists: an existing record is never overwritten")
+    tracking.log_run(rec, json_path=str(path), use_mlflow=False)
+    print(f"[live] detected {metrics['attacks_detected']}/{metrics['attacks']} attacks, tick median {lat['tick_ms']['median']:.2f} ms, "
+          f"p95 {lat['tick_ms']['p95']:.2f}, max {lat['tick_ms']['max']:.2f} (budget {BUDGET_MS}); record {path}", flush=True)
+    return out, rec
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
+    ap.add_argument("--live-tail", default=None, metavar="PCAP_DIR", help="follow a capture being written (a genuine live run)")
+    ap.add_argument("--ground-truth-dir", default=None, help="with --live-tail: the sessions dir holding <session>/ground_truth.jsonl (evaluation only)")
+    ap.add_argument("--stop-file", default=None)
+    ap.add_argument("--idle-stop", type=float, default=120.0)
     ap.add_argument("--demo", action="store_true", help="write only live/alerts_stream.jsonl (+ live/demo/); no E record")
     ap.add_argument("--record", default=None, help="with --demo: save one full replay here if its incidents equal the offline ones")
     ap.add_argument("--session", required=True)
@@ -333,6 +406,9 @@ def main(argv=None):
     ap.add_argument("--max-seconds", type=float, default=None)
     ap.add_argument("--for-report", action="store_true")
     args = ap.parse_args(argv)
+    if args.live_tail:
+        live_run(args.session, args.live_tail, args.ground_truth_dir, args.stop_file, args.idle_stop, for_report=args.for_report)
+        return
     if args.demo or args.record:
         if args.for_report:
             raise SystemExit("--demo / --record never write a report-grade run")

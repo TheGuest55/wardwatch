@@ -29,7 +29,8 @@ def iter_packets(pcap_path):
     sport, dport. TCP packets add syn/ack/rst/fin. ARP packets add arp_op (1 req/2 reply),
     arp_psrc, arp_pdst, arp_hwsrc. MQTT (TCP/1883 with payload) adds mqtt: list of control-packet
     dicts from mqtt.parse_segment."""
-    with PcapReader(str(pcap_path)) as reader:
+    # a path, or an open binary file object (src/realtime/livetail.py passes one that follows a growing capture)
+    with PcapReader(pcap_path if hasattr(pcap_path, "read") else str(pcap_path)) as reader:
         for pkt in reader:
             if not pkt.haslayer(Ether):
                 continue
