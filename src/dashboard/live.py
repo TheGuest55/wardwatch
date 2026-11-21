@@ -83,6 +83,8 @@ def banner(header):
     if not header:
         return "info", "Live alerts: no stream header yet"
     mode, session = header.get("mode"), header.get("session", "?")
+    if mode == "live" and header.get("capture"):
+        return "success", f"Live: following the capture of session {session} as it is written"
     if mode == "live":
         return "success", f"Live: replaying session {session} from PCAPs"
     if mode == "playback":

@@ -56,6 +56,12 @@ def test_live_banner(tmp_path, monkeypatch):
     assert "Live: replaying session r05 from PCAPs" in texts(at)
 
 
+def test_live_banner_for_a_genuine_capture(tmp_path, monkeypatch):
+    write(tmp_path, [head("live", recorded_utc=None, capture="tcpdump on br-ward, followed while written"), alert("2026-11-09T00:00:05Z")])
+    at = run(PAGE, tmp_path, monkeypatch)
+    assert "Live: following the capture of session r05 as it is written" in texts(at)
+
+
 def test_counts_newest_first_and_open_incidents(tmp_path, monkeypatch):
     write(tmp_path, [head(), alert("2026-11-09T00:00:05Z"), inc("incident_open", "2026-11-09T00:00:05Z"),
                      alert("2026-11-09T00:00:10Z", REVIEW, "r05-y-2"), alert("2026-11-09T00:00:15Z"),
