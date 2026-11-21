@@ -369,3 +369,15 @@ class TestRandomSplitReference:
         pd.testing.assert_frame_equal(before, mv.headline(df, "all", root))
         assert mv.selection(mv.headline(df, "all", root)) == sel
         assert mv.a_by_config(df, "all")["model"].isin(["xgboost", "random_forest"]).sum() == 0
+
+
+    def test_the_autoencoder_reference_record_is_excluded_too(self, root):
+        r = record("autoencoder", "random-split-reference", 0, 0.99, {"seeds": [0]}, {"post_freeze": True})
+        r["role"] = "anomaly"
+        write(root, "random_split/autoencoder.json", r)
+        by = _reasons(_df(root))
+        assert by["random_split/autoencoder.json"] == loaders.R_NOT_MODEL
+        before = mv.headline(_df(root), "all", root)
+        df = _df(root)
+        assert "random-split-reference" not in set(mv.headline(df[~df["experiment"].eq("random-split-reference")], "all", root).get("experiment", []))
+        assert mv.selection(before) == mv.selection(mv.headline(df, "all", root))
