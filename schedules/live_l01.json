@@ -1,0 +1,9 @@
+{
+  "gap_min": 150,
+  "gap_max": 200,
+  "runs": [
+    { "class": "syn_flood",  "params": { "pps": 1000, "duration": 30 } },
+    { "class": "bruteforce", "params": { "delay": 0.3, "wordlist_len": 150 } },
+    { "class": "eavesdrop",  "params": { "duration": 90 } }
+  ]
+}
