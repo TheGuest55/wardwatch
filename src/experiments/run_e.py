@@ -393,8 +393,65 @@ def live_run(session, pcap_dir, gt_dir, stop_file=None, idle_stop_s=120.0, live=
     return out, rec
 
 
+def eval_live(session, ref_parquet, stream_path, live_record, exp_dir=EXPE, for_report=False,
+              a_record=offline.RUNS / "triage_A.json", tri_dir=offline.TRI):
+    """Evaluation of a finished live run, from its own files only (no live code path is re-run with other settings):
+      1. replay the session's recorded capture through the same pair at speed 0 with an alert sink and require that the replay's alert
+         stream (every event after the header) EQUALS the stream the live run wrote, and that the live-built rows equal the offline
+         scoring of the labelled session parquet (`ref_parquet`, written by src.features.extract; outside every split);
+      2. the labelled evaluation of Experiment E (detection, cells, grouping, time to detect) on those rows;
+      3. record "E-live-eval" (for_report as asked) that cites the live record (its sha256), which carries the live latency."""
+    import hashlib
+    import tempfile
+    from ..realtime import alerts as alerts_mod
+    a = json.loads(Path(a_record).read_text())
+    key, gap = a["params"]["grouping_key"], a["params"]["grouping_gap_s"]
+    pair = Pair()
+    with tempfile.TemporaryDirectory() as d:
+        sink = alerts_mod.AlertSink(Path(d) / "replay.jsonl", {"mode": "replay"})
+        out = replay_session(session, pair, key, gap, speed=0, live_dir=Path(d) / "x", alerts=sink, with_post=False)
+        replay_events = [l for l in (Path(d) / "replay.jsonl").read_text().splitlines()][1:]
+    live_events = Path(stream_path).read_text().splitlines()[1:]
+    if replay_events != live_events:
+        bad = next((i for i, (x, y) in enumerate(zip(replay_events, live_events)) if x != y), min(len(replay_events), len(live_events)))
+        raise AssertionError(f"live stream differs from the replay of the same capture: {len(live_events)} live vs {len(replay_events)} replay "
+                             f"events, first difference at event {bad}")
+    ref = pd.read_parquet(ref_parquet)
+    live = to_session(session, out, pair, ref)
+    off = offline.Session(session, pair, df=ref, peers=live.peers)
+    eq = {"stream_events": len(live_events), "live_stream_equals_replay": True, "late_packets": out["builder"].late_packets,
+          "rows_vs_offline": compare_rows(live, off)}
+    ev = offline.evaluate_session(live, out["triager"])
+    tr = out["triager"]
+    lrec = json.loads(Path(live_record).read_text())
+    rec = tracking.build_run_record(
+        "E-live", "xgboost+isolation_forest", "pair",
+        params={"session": session, "grouping_key": key, "grouping_gap_s": gap, "live_record": str(live_record),
+                "live_record_sha256": hashlib.sha256(Path(live_record).read_bytes()).hexdigest()},
+        metrics={"pair_precision": ev["detection"]["pair_alerting"]["all"]["precision"],
+                 "pair_recall": ev["detection"]["pair_alerting"]["all"]["recall"],
+                 "pair_f1": ev["detection"]["pair_alerting"]["all"]["f1"],
+                 "grouping_accuracy": ev["grouping"]["accuracy"], "ttd_offline_median_s": ev["ttd"]["median_s"],
+                 "n_incidents": len(tr.records), "live_tick_median_ms": lrec["metrics"]["tick_median_ms"],
+                 "live_tick_p95_ms": lrec["metrics"]["tick_p95_ms"], "live_tick_max_ms": lrec["metrics"]["tick_max_ms"],
+                 "live_ticks_over_budget": lrec["metrics"]["ticks_over_budget"]},
+        tags={"stage": "E-live-eval", "equivalence": eq, "detection": ev["detection"], "cell_table": ev["cell_table"],
+              "grouping": ev["grouping"], "ttd_offline": ev["ttd"], "false_novel": ev["false_novel"],
+              "live_record": {"path": str(live_record), "latency": lrec["tags"]["latency"], "per_attack_crude": lrec["tags"]["per_attack"]},
+              "note": "labels from the labelled session parquet (outside every split); the live latency is the live run's own"},
+        seed=0, split_path=str(tt.SPLIT), dataset_path=str(tt.DATASET), for_report=for_report)
+    path = Path(exp_dir) / f"E-live-eval_{session}.json"
+    if path.exists():
+        raise SystemExit(f"{path} exists: an existing record is never overwritten")
+    tracking.log_run(rec, json_path=str(path), use_mlflow=False)
+    print(f"[live-eval] stream equals replay ({len(live_events)} events), rows equal offline {eq['rows_vs_offline']}; "
+          f"pair F1 {rec['metrics']['pair_f1']:.3f}; record {path}", flush=True)
+    return rec
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
+    ap.add_argument("--eval-live", nargs=3, metavar=("REF_PARQUET", "STREAM", "LIVE_RECORD"), help="evaluate a finished live run")
     ap.add_argument("--live-tail", default=None, metavar="PCAP_DIR", help="follow a capture being written (a genuine live run)")
     ap.add_argument("--ground-truth-dir", default=None, help="with --live-tail: the sessions dir holding <session>/ground_truth.jsonl (evaluation only)")
     ap.add_argument("--stop-file", default=None)
@@ -406,6 +463,9 @@ def main(argv=None):
     ap.add_argument("--max-seconds", type=float, default=None)
     ap.add_argument("--for-report", action="store_true")
     args = ap.parse_args(argv)
+    if args.eval_live:
+        eval_live(args.session, *args.eval_live, for_report=args.for_report)
+        return
     if args.live_tail:
         live_run(args.session, args.live_tail, args.ground_truth_dir, args.stop_file, args.idle_stop, for_report=args.for_report)
         return
