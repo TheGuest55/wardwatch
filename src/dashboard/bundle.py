@@ -8,7 +8,8 @@ a metrics dict), the prediction parquets and LSTM curve files those records poin
 load_lstm_curves), runs/lstm/selected_config.json, runs/lstm/explanations.json, runs/calibration/<model>_details.json,
 runs/expA/autoencoder_details.json, runs/bootstrap/*.json, runs/expA/predictions/<model>_multiclass_s0.parquet,
 testbed_windows.parquet (the dataset summary), live/incidents.jsonl and live/recorded/*.jsonl (a recorded alert stream of one real
-replay, which the "Live alerts" page plays back; live/alerts_stream.jsonl, the file a running replay writes, and live/demo/ are NOT bundled).
+replay, which the "Live alerts" page plays back) and live/screenshots/*.png (screenshots of the page during the live run;
+live/alerts_stream.jsonl, the file a running replay writes, live/demo/ and live_sessions/ are NOT bundled).
 
 WHAT IS EXCLUDED: PCAP slices (live/slices, triage/slices: they hold plaintext lab MQTT credentials), models/, logs, the
 peers sidecars, data/raw, and every other file.
@@ -71,6 +72,8 @@ def collect(root):
     for p in (root / "runs" / "bootstrap").glob("*.json"):
         found.add(p.resolve())
     for p in (root / "live" / "recorded").glob("*.jsonl"):
+        found.add(p.resolve())
+    for p in (root / "live" / "screenshots").glob("*.png"):
         found.add(p.resolve())
     out = []
     for p in found:

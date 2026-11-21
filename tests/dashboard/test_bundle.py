@@ -36,6 +36,10 @@ def full(root):
                                                                 "pcap_slice": "live/slices/x.pcap", "pcap_sha256": "ab" * 32}) + "\n")
     (root / "live" / "recorded").mkdir()
     (root / "live" / "recorded" / "alerts_stream_r05.jsonl").write_text(json.dumps({"header": {"mode": "recorded", "session": "r05"}}) + "\n")
+    (root / "live" / "screenshots").mkdir()
+    (root / "live" / "screenshots" / "live_180522.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (root / "live_sessions").mkdir()
+    (root / "live_sessions" / "L01.parquet").write_bytes(b"x")
     (root / "live" / "alerts_stream.jsonl").write_text(json.dumps({"header": {"mode": "live"}}) + "\n")     # what a running replay writes
     (root / "live" / "demo").mkdir()
     (root / "live" / "demo" / "incidents_r05.jsonl").write_text("{}\n")
@@ -61,6 +65,8 @@ class TestCollect:
     def test_includes_the_recorded_alert_stream_and_excludes_a_running_replays_files(self, full):
         rels = bundle.collect(full)
         assert "live/recorded/alerts_stream_r05.jsonl" in rels
+        assert "live/screenshots/live_180522.png" in rels                                  # the live run's screenshots
+        assert not any(r.startswith("live_sessions/") for r in rels)                       # the labelled L01 parquet stays out
         assert "live/alerts_stream.jsonl" not in rels and not any(r.startswith("live/demo/") for r in rels)
         for bad in ("live/alerts_stream.jsonl", "live/demo/incidents_r05.jsonl"):
             with pytest.raises(SystemExit):
