@@ -117,7 +117,7 @@ bash scripts/analysis.sh test        # or: make test
 This runs every test folder, even after one fails: `tests/pipeline`, `realtime`, `triage` and `generation` in the pinned
 analysis image (`--network none`, `data/raw` read-only), and `tests/dashboard` (pytest) in the dashboard image
 (`make dashboard-image` builds it; if it is missing the script says so and fails, it never skips). It ends with a
-per-folder line and a `TOTAL` line, and exits non-zero if any folder failed, skipped a test or ran 0 tests. A guard
+per-folder line and a `TOTAL` line, and exits non-zero if any folder failed or ran 0 tests, and on a full-data checkout also if any test skipped. A guard
 refuses to run if a `tests/<dir>` with `test_*.py` is not in the script's list.
 
 Expect 0 failures; some tests skip when their data isn't present, each printing what it needs (USER_MANUAL.md, section 6).
