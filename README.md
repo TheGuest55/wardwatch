@@ -120,16 +120,7 @@ analysis image (`--network none`, `data/raw` read-only), and `tests/dashboard` (
 per-folder line and a `TOTAL` line, and exits non-zero if any folder failed, skipped a test or ran 0 tests. A guard
 refuses to run if a `tests/<dir>` with `test_*.py` is not in the script's list.
 
-Expected on the current master (the counts grow as tests are added):
-
-| folder | tests |
-|---|---|
-| pipeline | 240 |
-| realtime | 18 |
-| triage | 44 |
-| generation | 50 |
-| dashboard | 51 |
-| **TOTAL** | **403** |
+Expect 0 failures; some tests skip when their data isn't present, each printing what it needs (USER_MANUAL.md, section 6).
 
 `bash scripts/run_tests.sh generation` runs only the stdlib generation tests on the host Python (fast); the same 50 also run in the full suite.
 
@@ -193,7 +184,7 @@ previous step's outputs under `data/processed/v2/`.
 | A | Experiment A (time split) + seed-0 models | `python -m src.models.train_tree --model xgboost --for-report` (and `--model random_forest`) | `runs/expA/`, `models/expA/` |
 | B / C | Leave-one-attack-out / cross-dataset | `python -m src.models.train_tree --model xgboost --experiment B` (or `C`) | `runs/expB/`, `runs/expC/` |
 | A–C report | Per-seed report records (both views: all rows / attacker excluded), saved predictions, DDoS guard; same protocol as `train_tree` | `python -m src.experiments.run_tree_report --model xgboost --experiment A --for-report` (then `B`, `C`; repeat for `random_forest`) | `runs/exp{A,B,C}/<model>_*_s<seed>.json`, `predictions/`, `<model>_summary.md` |
-| 1 | Random-split reference (proposal §3.4) | `python -m src.models.random_split --model xgboost --seeds 5 --save-predictions --for-report` | `runs/random_split/`, `runs/predictions/random_*.parquet` |
+| 1 | Random-split reference (reference only; not a selection input) | `python -m src.models.random_split --model xgboost --seeds 5 --save-predictions --for-report` | `runs/random_split/`, `runs/predictions/random_*.parquet` |
 | 2 | Calibration, confidence bands, SHAP | `python -m src.models.calibrate_explain --model xgboost --for-report` | `runs/calibration/`, `models/expA/*_calibrator.joblib`, `*_triage_config.json` |
 | 3 | Block-bootstrap 95% CIs | `python -m src.models.bootstrap_ci --export-a xgboost --export-a random_forest --pred A_xgboost --pred A_random_forest --pred random_xgboost --pred random_random_forest --tag xgb_rf_time_random --for-report` | `runs/bootstrap/`, `runs/predictions/A_*.parquet` |
 | C size check | Frame-size sensitivity: Experiment C as trained without the 7 frame-size features (not a selection input) | `python -m src.experiments.run_tree_report --model xgboost --experiment C --size-variant nosize --for-report` (same flag on `train_autoencoder --model isolation_forest` and `run_lstm_c`) | `runs/expC_nosize/`, `runs/lstm_c_nosize/` |
@@ -202,9 +193,8 @@ previous step's outputs under `data/processed/v2/`.
 | 4 | Report figures (PNG 300 dpi + PDF) | `python -m src.models.figures` | `figures/` |
 | D | Benchmark on CICIoMT2024's own CSVs | `python -m src.models.exp_d --models xgboost random_forest --for-report` (leakage check: add `--drop IAT --seeds 1`) | `runs/expD/` |
 
-Steps A, B/C, 1 and 2 repeat with `--model random_forest`. Step D is the long one: measured on a
-12-core laptop, XGBoost with 3 seeds takes ≈ 1.6 h (most of it on the 19-class task) and RF ≈ 25 min.
-The other steps take minutes.
+Steps A, B/C, 1 and 2 repeat with `--model random_forest`. Step D is the long one: it takes hours (the per-task training times are in the `train_s` fields of
+`runs/expD/*.json`). The other steps take minutes.
 
 **Triage, real time and Experiment E (deployed pair: XGBoost + Isolation Forest)**
 
@@ -282,26 +272,7 @@ files one by one rather than in parallel. `exp_d` refuses to run unless all 19 c
 Memory: the full set needs ≈ 4 GB in Docker. Random Forest *without IAT* on the 6- and 19-class
 tasks needs more than the default 8 GB and was not run.
 
-**Headline results** (details and every number's run record are in each `runs/…/*.json`):
-
-- *Random vs time split:* shuffling windows (71% of test windows have a neighbour in train; 100% of
-  test attacks come from a run seen in training) does **not** raise F1: XGBoost 0.896 → 0.900,
-  RF 0.918 → 0.911, CIs overlap. The time split is already in-distribution (every attack class in
-  every session), so experiments B and C are the real generalisation tests.
-- *Calibration:* isotonic (chosen by cross-fitting the two validation sessions) cuts XGBoost's test
-  ECE from 0.0176 to 0.0013. Misses concentrate in eavesdrop, pump_cmd and spoof_vitals. A calibrated
-  score plus SHAP explanation takes 33.6 ms per window (p95), inside the 50 ms budget. RF takes
-  83 ms / 181 ms, over budget.
-- *CIs (Experiment A, paired):* XGBoost − RF F1 = −0.021 [−0.032, −0.011], but PR-AUC is equal
-  (+0.000 [−0.007, +0.008]): the two models separate attacks equally well and differ only in where
-  the validation threshold lands.
-- *Experiment D (CIC official split):* matches the published best (Dadkhah et al., Table 8) on 2 and
-  6 classes: XGBoost macro-F1 0.983 / 0.946 and RF 0.984 / 0.949, vs 0.982 / 0.942 published. RF
-  reaches 0.902 on 19 classes vs 0.907 published. **However, CIC's `IAT` column is a capture
-  timestamp**: it is near-constant within each attack class and identical across train and test.
-  Without it, XGBoost multiclass macro-F1 falls to 0.822 (6 classes) and 0.703 (19 classes),
-  accuracy ≈ 0.80. Binary detection is robust (0.970). The published multiclass numbers are
-  therefore inflated by a recording artefact, not attack behaviour.
+**Results.** The reported results (Experiments A–E, the selection with confidence intervals, triage and the live run) are in the report and on the dashboard (USER_MANUAL.md, Level 1). Every number comes from a run record under `data/processed/v2/runs/` (USER_MANUAL.md, section 8).
 
 ## Running the lab (not needed for model work)
 
