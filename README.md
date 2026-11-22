@@ -222,6 +222,8 @@ records, predictions, calibration and explanation files, bootstrap CIs, the data
 PCAP slices, models, logs or raw data** (PCAP slices contain the lab's plaintext MQTT credentials). In the Incidents page the
 evidence file is therefore shown as "not included in this bundle" together with its recorded SHA-256.
 
+The published bundle is `wardwatch_results_483a3ca.zip` (SHA-256 `e1e26832c64c93155b7686bcc644eacc28a219c55acec9fd7808fcaec0901d3a`), the asset of the `results-final` release: <https://github.com/TheGuest55/wardwatch/releases/download/results-final/wardwatch_results_483a3ca.zip> (release page: <https://github.com/TheGuest55/wardwatch/releases/tag/results-final>). Downloading a release asset needs the repository to be public, or a GitHub account with access to it; otherwise the link returns "404 Not Found".
+
 Build it (maintainers; the build stops if it finds a `.pcap`, a credentials-named file, or any username/password from
 `data/raw/creds/accounts.json` in a bundled file; that file is read in memory for the scan only):
 

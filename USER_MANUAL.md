@@ -16,16 +16,15 @@ Every command is given for **bash** (Linux, macOS, Git Bash, WSL) and **PowerShe
 ## Quick start
 
 **Your starting point is the submission package** (no GitHub account or access is needed): a zip whose root folder `WardWatch_Group8_SourceCode` holds the code (with this manual at its root) and a `release/` folder with the v2 dataset zip.
-The results zip is larger and is **not** in the package: download it from the shared-drive link `<RESULTS_LINK>` (Level 1 only) and save it next to the `WardWatch_Group8_SourceCode` folder.
+The results zip is larger and is **not** in the package: download it (Level 1 only) from the `results-final` GitHub release: <https://github.com/TheGuest55/wardwatch/releases/download/results-final/wardwatch_results_483a3ca.zip> (release page: <https://github.com/TheGuest55/wardwatch/releases/tag/results-final>) and save it next to the `WardWatch_Group8_SourceCode` folder.
 
 ```
 WardWatch_Group8_SourceCode/
   (the repository; this manual is USER_MANUAL.md, also USER_MANUAL.pdf)
   release/    wardwatch-v2-dataset.zip (the v2 dataset, Level 2)
-wardwatch_results_483a3ca.zip   the results zip, downloaded from <RESULTS_LINK> (Level 1), saved next to the WardWatch_Group8_SourceCode folder
+wardwatch_results_483a3ca.zip   the results zip, downloaded from the results-final release (Level 1), saved next to the WardWatch_Group8_SourceCode folder
 ```
-(The repository is private, so `git clone` and the GitHub release download links only work for people who
-have access: those commands are in the box "If you have access to the private repository" at the end of this section.)
+(Downloading a release asset (the results zip or the dataset release) and `git clone` need the repository to be public, or a GitHub account with access to it; otherwise GitHub answers "404 Not Found". The clone and dataset-release commands are in the box "If you have access to the private repository" at the end of this section.)
 
 Run every command from the folder named in the first line of the block. **Check each zip against its hash before you use it**:
 the results zip must have SHA-256 `e1e26832c64c93155b7686bcc644eacc28a219c55acec9fd7808fcaec0901d3a` and the dataset zip `e2d3ea557eb48554ac263e63dfd3be0e548e8dec8662baff531b9cfc2b14d87e` (see "Downloads" under Level 1 and
@@ -112,7 +111,7 @@ PowerShell:
 git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git; cd wardwatch
 Invoke-WebRequest -Uri "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/wardwatch-v2-dataset.zip" -OutFile v2.zip
 ```
-Then follow the Level 2 block above with `v2.zip` in place of `release/wardwatch-v2-dataset.zip` (check the same hash); the results zip for Level 1 always comes from `<RESULTS_LINK>`. Release page of the dataset:
+Then follow the Level 2 block above with `v2.zip` in place of `release/wardwatch-v2-dataset.zip` (check the same hash); the results zip for Level 1 always comes from the `results-final` release (Quick start). Release page of the dataset:
 <https://github.com/TheGuest55/wardwatch/releases/tag/v2-dataset>. Without access they return "404 Not Found": that is
 normal for a private repository; use the submission package.
 </details>
@@ -134,8 +133,7 @@ normal for a private repository; use the submission package.
 
 ## 2. Level 1: view the results
 
-**Downloads.** The results zip is for **viewing only** (Level 1); Level 2 does not use it. It is about 316 MB and is **not** in the submission package: download it from the shared-drive link
-`<RESULTS_LINK>` in your browser and save it next to the `WardWatch_Group8_SourceCode` folder. Check it is the published file:
+**Downloads.** The results zip is for **viewing only** (Level 1); Level 2 does not use it. It is about 316 MB and is **not** in the submission package: download it in your browser from <https://github.com/TheGuest55/wardwatch/releases/download/results-final/wardwatch_results_483a3ca.zip> (release page: <https://github.com/TheGuest55/wardwatch/releases/tag/results-final>; the repository must be public, or you need access to it) and save it next to the `WardWatch_Group8_SourceCode` folder. Check it is the published file:
 
 bash: `sha256sum wardwatch_results_483a3ca.zip`   PowerShell: `Get-FileHash wardwatch_results_483a3ca.zip -Algorithm SHA256`
 
