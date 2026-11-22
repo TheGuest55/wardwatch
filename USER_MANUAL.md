@@ -72,7 +72,7 @@ docker run --rm --network none --cpus 5 -e ANALYSIS_CPUS=5 -v "${PWD}:/work" -v 
 ```
 (The dataset zip extracts `data/processed/v2/...` and `data/raw/sessions/split_v2.json` into the `WardWatch_Group8_SourceCode` folder. The package has no `.git` folder, so the image's commit label stays `unknown`; that does not affect anything.)
 
-**Expected.** With the code and the v2 dataset only, `bash scripts/analysis.sh test` should report 0 failures (the dashboard folder needs the dashboard image from Level 1). Expect 0 failures; some tests skip when their data isn't present, each printing what it needs (section 6). The PowerShell form runs the four analysis-image folders only.
+**Expected.** With the code and the v2 dataset only, `bash scripts/analysis.sh test` should report 0 failures (the dashboard folder needs the dashboard image from Level 1); some tests skip when their data isn't present, each printing what it needs (section 6). The PowerShell form runs the four analysis-image folders only.
 
 `reproduce A` retrains five models and compares **30 numbers** (test F1, PR-AUC and FPR at 90% recall, for all rows and with the attacker host excluded) with
 `reproduce/expected.json`, a file that ships with the repository. Before it trains anything it checks that your `testbed_windows.parquet` is the file the results were
