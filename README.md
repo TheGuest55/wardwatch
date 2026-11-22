@@ -276,7 +276,7 @@ you publish it from the host: `sbx ports <sandbox-name> --publish 8501:8501`.
 
 **Experiment D data (not in the dataset bundle).** CIC requires a registration form, so download by
 hand from <https://www.unb.ca/cic/datasets/iomt-dataset-2024.html> → `WiFI_and_MQTT/attacks/CSV`:
-all 51 `train/` and all 21 `test/` files (≈ 2.2 GB) into `data/raw/ciciomt2024_csv/{train,test}/`.
+all 51 `train/` and all 21 `test/` files (≈ 2.2 GB) into `data/raw/ciciomt2024/WiFi_and_MQTT/attacks/csv/{train,test}/`.
 The server serves **one download per login session at a time** and pauses often, so download the
 files one by one rather than in parallel. `exp_d` refuses to run unless all 19 classes are present.
 Memory: the full set needs ≈ 4 GB in Docker. Random Forest *without IAT* on the 6- and 19-class
