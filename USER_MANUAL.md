@@ -15,16 +15,16 @@ Every command is given for **bash** (Linux, macOS, Git Bash, WSL) and **PowerShe
 
 ## Quick start
 
-**Your starting point is the submission package** (no GitHub account or access is needed): a folder that holds the code and a `release/` folder with the v2 dataset zip.
-The results zip is larger and is **not** in the package: download it from the shared-drive link `<RESULTS_LINK>` (Level 1 only) and save it in the `wardwatch-submission` folder.
+**Your starting point is the submission package** (no GitHub account or access is needed): a zip whose root folder `WardWatch_Group8_SourceCode` holds the code (with this manual at its root) and a `release/` folder with the v2 dataset zip.
+The results zip is larger and is **not** in the package: download it from the shared-drive link `<RESULTS_LINK>` (Level 1 only) and save it next to the `WardWatch_Group8_SourceCode` folder.
 
 ```
-wardwatch-submission/
-  code/       the repository (this manual is code/USER_MANUAL.md)
+WardWatch_Group8_SourceCode/
+  (the repository; this manual is USER_MANUAL.md, also USER_MANUAL.pdf)
   release/    wardwatch-v2-dataset.zip (the v2 dataset, Level 2)
-  <RESULTS_ZIP>   the results zip, downloaded from <RESULTS_LINK> (Level 1)
+wardwatch_results_483a3ca.zip   the results zip, downloaded from <RESULTS_LINK> (Level 1), saved next to the WardWatch_Group8_SourceCode folder
 ```
-(`<RESULTS_ZIP>` stands for the name of the results zip you downloaded; the dataset zip is `wardwatch-v2-dataset.zip`. The repository is private, so `git clone` and the GitHub release download links only work for people who
+(The repository is private, so `git clone` and the GitHub release download links only work for people who
 have access: those commands are in the box "If you have access to the private repository" at the end of this section.)
 
 Run every command from the folder named in the first line of the block. **Check each zip against its hash before you use it**:
@@ -35,17 +35,17 @@ Level 2). bash: `sha256sum <file>`. PowerShell: `Get-FileHash <file> -Algorithm 
 
 bash:
 ```bash
-cd wardwatch-submission/code
-sha256sum ../<RESULTS_ZIP>
-unzip ../<RESULTS_ZIP> -d results
+cd WardWatch_Group8_SourceCode
+sha256sum ../wardwatch_results_483a3ca.zip
+unzip ../wardwatch_results_483a3ca.zip -d results
 docker build -t wardwatch-dashboard:0.1.0 docker/dashboard
 docker run --rm --name wardwatch-dashboard -p 8501:8501 --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges -v "$PWD:/work:ro" -v "$PWD/results:/data:ro" -e WARDWATCH_DATA_ROOT=/data wardwatch-dashboard:0.1.0
 ```
 PowerShell:
 ```powershell
-cd wardwatch-submission/code
-Get-FileHash ../<RESULTS_ZIP> -Algorithm SHA256
-Expand-Archive ../<RESULTS_ZIP> -DestinationPath results
+cd WardWatch_Group8_SourceCode
+Get-FileHash ../wardwatch_results_483a3ca.zip -Algorithm SHA256
+Expand-Archive ../wardwatch_results_483a3ca.zip -DestinationPath results
 docker build -t wardwatch-dashboard:0.1.0 docker/dashboard
 docker run --rm --name wardwatch-dashboard -p 8501:8501 --read-only --tmpfs /tmp --tmpfs /root --cap-drop ALL --security-opt no-new-privileges -v "${PWD}:/work:ro" -v "${PWD}/results:/data:ro" -e WARDWATCH_DATA_ROOT=/data wardwatch-dashboard:0.1.0
 ```
@@ -56,34 +56,23 @@ a headline table with six models (XGBoost, Random Forest, autoencoder, Isolation
 
 bash:
 ```bash
-cd wardwatch-submission/code
-sha256sum ../release/wardwatch-v2-dataset.zip && unzip -o ../release/wardwatch-v2-dataset.zip
+cd WardWatch_Group8_SourceCode
+sha256sum release/wardwatch-v2-dataset.zip && unzip -o release/wardwatch-v2-dataset.zip
 docker build --pull -t wardwatch-analysis:0.2.0 services/analysis
 bash scripts/analysis.sh test
 bash scripts/analysis.sh reproduce A
 ```
 PowerShell:
 ```powershell
-cd wardwatch-submission/code
-Get-FileHash ../release/wardwatch-v2-dataset.zip -Algorithm SHA256; Expand-Archive ../release/wardwatch-v2-dataset.zip -DestinationPath . -Force
+cd WardWatch_Group8_SourceCode
+Get-FileHash release/wardwatch-v2-dataset.zip -Algorithm SHA256; Expand-Archive release/wardwatch-v2-dataset.zip -DestinationPath . -Force
 docker build --pull -t wardwatch-analysis:0.2.0 services/analysis
 docker run --rm --network none -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 sh -c "python -m unittest discover -s tests/pipeline -p 'test_*.py'; python -m unittest discover -s tests/realtime -t . -p 'test_*.py'; python -m unittest discover -s tests/triage -t . -p 'test_*.py'; PYTHONPATH=services/shared:services/devices:services/attacker:scripts python -m unittest discover -s tests/generation -p 'test_*.py'"
 docker run --rm --network none --cpus 5 -e ANALYSIS_CPUS=5 -v "${PWD}:/work" -v "${PWD}/data/raw:/work/data/raw:ro" -w /work wardwatch-analysis:0.2.0 python -m src.reproduce A
 ```
-(The dataset zip extracts `data/processed/v2/...` and `data/raw/sessions/split_v2.json` into the `code` folder. The package has no `.git` folder, so the image's commit label stays `unknown`; that does not affect anything.)
+(The dataset zip extracts `data/processed/v2/...` and `data/raw/sessions/split_v2.json` into the `WardWatch_Group8_SourceCode` folder. The package has no `.git` folder, so the image's commit label stays `unknown`; that does not affect anything.)
 
-**Expected.** With the code and the v2 dataset only, `bash scripts/analysis.sh test` ends with this summary (the dashboard folder needs the dashboard image from Level 1; the
-skips are tests that need data that is not published, each skip message says which; section 6):
-
-```
-pipeline     ran 301   skipped 13  OK (13 skipped: data absent, see USER_MANUAL)
-realtime     ran 18    skipped 1   OK (1 skipped: data absent, see USER_MANUAL)
-triage       ran 44    skipped 8   OK (8 skipped: data absent, see USER_MANUAL)
-generation   ran 50    skipped 0   OK
-dashboard    ran 90    skipped 4   OK (4 skipped: data absent, see USER_MANUAL)
-TOTAL        ran 503   skipped 26  OK
-```
-The PowerShell form runs the four analysis-image folders only: each unittest run ends with `OK` (with `skipped=...` where data is absent; 301 + 18 + 44 + 50 tests).
+**Expected.** With the code and the v2 dataset only, `bash scripts/analysis.sh test` should report 0 failures (the dashboard folder needs the dashboard image from Level 1); some tests skip when their data isn't present, each printing what it needs (section 6). The PowerShell form runs the four analysis-image folders only.
 
 `reproduce A` retrains five models and compares **30 numbers** (test F1, PR-AUC and FPR at 90% recall, for all rows and with the attacker host excluded) with
 `reproduce/expected.json`, a file that ships with the repository. Before it trains anything it checks that your `testbed_windows.parquet` is the file the results were
@@ -97,7 +86,7 @@ The dashboard's **Live alerts** page (page 8, refreshes every 2 seconds) shows a
 - **Playback** (needs only the results zip from Level 1): replays the *recorded* alert stream of a real replay of session r05 (the banner shows the recording date and commit). The recording is `live/recorded/alerts_stream_r05.jsonl` in the results zip; it is played back at `SPEED` times real time (default 10, so a few minutes).
 - **Live** (needs the raw PCAPs and the trained models, i.e. the authors' full-data checkout): replays session r05 from its PCAPs through the deployed detector pair; the banner reads "Live: replaying session r05 from PCAPs".
 
-bash (from the `code` folder; `DATA=results` is the folder the results zip was unzipped to; the Level 1 dashboard container must be stopped first because both use port 8501, or add `DASH_PORT=8502`):
+bash (from the `WardWatch_Group8_SourceCode` folder; `DATA=results` is the folder the results zip was unzipped to; the Level 1 dashboard container must be stopped first because both use port 8501, or add `DASH_PORT=8502`):
 ```bash
 make live-demo SESSION=r05 SPEED=10 DATA=results
 ```
@@ -123,7 +112,7 @@ PowerShell:
 git clone -c core.autocrlf=input https://github.com/TheGuest55/wardwatch.git; cd wardwatch
 Invoke-WebRequest -Uri "https://github.com/TheGuest55/wardwatch/releases/download/v2-dataset/wardwatch-v2-dataset.zip" -OutFile v2.zip
 ```
-Then follow the Level 2 block above with `v2.zip` in place of `../release/wardwatch-v2-dataset.zip` (check the same hash); the results zip for Level 1 always comes from `<RESULTS_LINK>`. Release page of the dataset:
+Then follow the Level 2 block above with `v2.zip` in place of `release/wardwatch-v2-dataset.zip` (check the same hash); the results zip for Level 1 always comes from `<RESULTS_LINK>`. Release page of the dataset:
 <https://github.com/TheGuest55/wardwatch/releases/tag/v2-dataset>. Without access they return "404 Not Found": that is
 normal for a private repository; use the submission package.
 </details>
@@ -146,9 +135,9 @@ normal for a private repository; use the submission package.
 ## 2. Level 1: view the results
 
 **Downloads.** The results zip is for **viewing only** (Level 1); Level 2 does not use it. It is about 316 MB and is **not** in the submission package: download it from the shared-drive link
-`<RESULTS_LINK>` in your browser and save it in the `wardwatch-submission` folder (next to `code/`). Check it is the published file:
+`<RESULTS_LINK>` in your browser and save it next to the `WardWatch_Group8_SourceCode` folder. Check it is the published file:
 
-bash: `sha256sum <RESULTS_ZIP>`   PowerShell: `Get-FileHash <RESULTS_ZIP> -Algorithm SHA256`
+bash: `sha256sum wardwatch_results_483a3ca.zip`   PowerShell: `Get-FileHash wardwatch_results_483a3ca.zip -Algorithm SHA256`
 
 The expected SHA-256 is `e1e26832c64c93155b7686bcc644eacc28a219c55acec9fd7808fcaec0901d3a` (`BUNDLE.json` inside the zip records the commit, 483a3ca, and the build date it was made from).
 
@@ -178,7 +167,7 @@ are never published; the page shows the recorded hash and this message instead. 
 ## 3. Level 2: reproduce the results from the v2 dataset
 
 **Downloads.** The dataset zip is `release/wardwatch-v2-dataset.zip` in the submission package (with access to the private repository: the asset of the `v2-dataset` release). Extract it **at the root of the
-`code` folder**: it carries the `data/...` paths. Afterwards these must exist:
+`WardWatch_Group8_SourceCode` folder**: it carries the `data/...` paths. Afterwards these must exist:
 
 ```
 data/processed/v2/testbed_windows.parquet
@@ -256,19 +245,11 @@ PowerShell users: `make` needs a Windows port; use WSL or Git Bash for this leve
 
 `bash scripts/analysis.sh test` runs five test folders. A test that needs data **skips only when that data is absent**, and says what is missing and which
 level of this manual provides it; with the data present the test runs unchanged. On a checkout **without** the full data the skips are reported ("data absent")
-and are not a failure; on a **full-data** checkout (raw session PCAPs and trained models present) any skip fails the run, so a full-data suite is 503 run, 0 skipped.
+and are not a failure; on a **full-data** checkout (raw session PCAPs and trained models present) any skip fails the run, so a full-data suite has 0 skips.
 
-Measured (19 Nov, `bash scripts/analysis.sh test`, wardwatch-analysis:0.2.0 and wardwatch-dashboard:0.1.0):
+Expect 0 failures; some tests skip when their data isn't present, each printing what it needs (section 6).
 
-| What you have | pipeline | realtime | triage | generation | dashboard | TOTAL run | skipped |
-|---|---|---|---|---|---|---|---|
-| fresh clone, no data | 301 run, 14 skipped | 18 run, 2 skipped | 44 run, 8 skipped | 50 run, 0 | 90 run, 4 skipped | 503 | 28 |
-| plus the v2 dataset (Level 2) | 301 run, 13 skipped | 18 run, 1 skipped | 44 run, 8 skipped | 50 run, 0 | 90 run, 4 skipped | 503 | 26 |
-| plus the results zip (Level 1; adds no tests) | 301 run, 13 skipped | 18 run, 1 skipped | 44 run, 8 skipped | 50 run, 0 | 90 run, 4 skipped | 503 | 26 |
-| full data (the authors' checkout: raw PCAPs, models, credentials file) | 301 run, 0 skipped | 18 run, 0 skipped | 44 run, 0 skipped | 50 run, 0 | 90 run, 0 skipped | 503 | 0 |
-
-The results zip adds no running tests: the tests that read recorded runs also need the trained models or the raw PCAPs (Level 3 material, not published). The 26
-skipped tests at Level 2 need, by their skip messages: the raw session PCAPs, the raw session ground truth, the trained model files, the lab credentials file (the
+The results zip adds no running tests: the tests that read recorded runs also need the trained models or the raw PCAPs (Level 3 material, not published). The skipped tests at Level 2 need, by their skip messages: the raw session PCAPs, the raw session ground truth, the trained model files, the lab credentials file (the
 bundle build tests) or CICIoMT2024's feature CSVs (section 5). Run `python -m unittest ... -v` (inside the image) to see every skip message.
 
 ## 7. Troubleshooting
@@ -282,7 +263,7 @@ bundle build tests) or CICIoMT2024's feature CSVs (section 5). Run `python -m un
 | `No space left on device` (in a build, a test or a training run) | Docker's own disk is full: keep at least 15 GB free for Docker (Docker Desktop: Settings, Resources, Disk image size). `docker builder prune` removes the build cache; `docker system df` shows what uses the space. |
 | the tests report data files not found | the v2 dataset is not at the path in Level 2; the layout must match exactly. |
 | `reproduce` prints `FAIL: wrong dataset` | your `testbed_windows.parquet` is not the file the expected numbers were made on: download the v2 dataset release again and extract it at the repository root. |
-| `reproduce lstm` stops with `cannot run the LSTM target` | the sanitised ground truth `data/processed/v2/ground_truth/<session>/ground_truth.jsonl` is missing: it is part of the v2 dataset zip, so extract that zip again at the root of the `code` folder (an older copy of the zip lacks it). |
+| `reproduce lstm` stops with `cannot run the LSTM target` | the sanitised ground truth `data/processed/v2/ground_truth/<session>/ground_truth.jsonl` is missing: it is part of the v2 dataset zip, so extract that zip again at the root of the `WardWatch_Group8_SourceCode` folder (an older copy of the zip lacks it). |
 | the tests print `skipped` | normal without the full data: each skip names what is missing and the level that provides it (section 6). |
 | `scripts/analysis.sh` says `no such image` | the script builds `wardwatch-analysis:0.2.0` itself the first time it is missing; or build it as in Level 2. |
 | a worktree or clone shows no `data/` | `data/` is not in git. Download the releases as above. |
